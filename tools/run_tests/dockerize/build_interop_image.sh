@@ -13,105 +13,129 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# This script is invoked by run_interop_tests.py to build the docker image
-# for interop testing. You should never need to call this script on your own.
+# This script is invoked by run_interop_tests.py and create_matrix_images.py
+# to build the docker image for interop testing in a single docker build pass
+# with structured OCI metadata labels.
 
 set -ex
 
 # Params:
 #  INTEROP_IMAGE - name of tag of the final interop image
 #  BASE_NAME - base name used to locate the base Dockerfile and build script
+#  INTEROP_RELEASE - release tag to embed in OCI labels (default: master)
+#  COMMIT_LOG_FILE - optional path to commit_log file for /var/local/build_info
 #  BUILD_INTEROP_DOCKER_EXTRA_ARGS - optional args to be passed to the
-#    docker run command
+#    docker build command
 #  GRPC_ROOT - grpc base directory, default to top of this tree.
 #  GRPC_GO_ROOT - grpc-go base directory, default to '$GRPC_ROOT/../grpc-go'
 #  GRPC_JAVA_ROOT - grpc-java base directory, default to '$GRPC_ROOT/../grpc-java'
 
-cd "$(dirname "$0")/../../.."
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$REPO_ROOT"
 echo "GRPC_ROOT: ${GRPC_ROOT:=$(pwd)}"
-MOUNT_ARGS="-v $GRPC_ROOT:/var/local/jenkins/grpc:ro"
 
-echo "GRPC_JAVA_ROOT: ${GRPC_JAVA_ROOT:=$(cd ../grpc-java && pwd)}"
-if [ -n "$GRPC_JAVA_ROOT" ]
-then
-  MOUNT_ARGS+=" -v $GRPC_JAVA_ROOT:/var/local/jenkins/grpc-java:ro"
+BUILD_CONTEXT_DIR="$(mktemp -d)"
+cleanup() {
+  rm -rf "$BUILD_CONTEXT_DIR"
+}
+trap cleanup EXIT
+
+stage_tree() {
+  local src="$1"
+  local dst="$2"
+  if [ -n "$src" ] && [ -e "$src" ]; then
+    mkdir -p "$(dirname "$dst")"
+    cp -al "$src" "$dst" 2>/dev/null || cp -a "$src" "$dst"
+  fi
+}
+
+mkdir -p "$BUILD_CONTEXT_DIR/jenkins"
+
+case "$BASE_NAME" in
+  grpc_interop_java*)
+    echo "GRPC_JAVA_ROOT: ${GRPC_JAVA_ROOT:=$(cd ../grpc-java 2>/dev/null && pwd || true)}"
+    stage_tree "$GRPC_JAVA_ROOT" "$BUILD_CONTEXT_DIR/jenkins/grpc-java"
+    ;;
+  grpc_interop_go*)
+    echo "GRPC_GO_ROOT: ${GRPC_GO_ROOT:=$(cd ../grpc-go 2>/dev/null && pwd || true)}"
+    stage_tree "$GRPC_GO_ROOT" "$BUILD_CONTEXT_DIR/jenkins/grpc-go"
+    ;;
+  grpc_interop_dart*)
+    echo "GRPC_DART_ROOT: ${GRPC_DART_ROOT:=$(cd ../grpc-dart 2>/dev/null && pwd || true)}"
+    stage_tree "$GRPC_DART_ROOT" "$BUILD_CONTEXT_DIR/jenkins/grpc-dart"
+    ;;
+  grpc_interop_node*)
+    echo "GRPC_NODE_ROOT: ${GRPC_NODE_ROOT:=$(cd ../grpc-node 2>/dev/null && pwd || true)}"
+    stage_tree "$GRPC_NODE_ROOT" "$BUILD_CONTEXT_DIR/jenkins/grpc-node"
+    ;;
+  grpc_interop_aspnetcore*)
+    echo "GRPC_DOTNET_ROOT: ${GRPC_DOTNET_ROOT:=$(cd ../grpc-dotnet 2>/dev/null && pwd || true)}"
+    stage_tree "$GRPC_DOTNET_ROOT" "$BUILD_CONTEXT_DIR/jenkins/grpc-dotnet"
+    ;;
+  *)
+    stage_tree "$GRPC_ROOT" "$BUILD_CONTEXT_DIR/jenkins/grpc"
+    ;;
+esac
+
+# Always ensure the build_interop.sh script is staged under jenkins/grpc
+if [ ! -e "$BUILD_CONTEXT_DIR/jenkins/grpc/tools/dockerfile/interoptest/$BASE_NAME/build_interop.sh" ]; then
+  if [ -e "$GRPC_ROOT/tools/dockerfile/interoptest/$BASE_NAME" ]; then
+    stage_tree "$GRPC_ROOT/tools/dockerfile/interoptest/$BASE_NAME" \
+      "$BUILD_CONTEXT_DIR/jenkins/grpc/tools/dockerfile/interoptest/$BASE_NAME"
+  else
+    stage_tree "$REPO_ROOT/tools/dockerfile/interoptest/$BASE_NAME" \
+      "$BUILD_CONTEXT_DIR/jenkins/grpc/tools/dockerfile/interoptest/$BASE_NAME"
+  fi
+fi
+
+# Stage service account directory if available.
+if [ -e "$HOME/service_account" ]; then
+  stage_tree "$HOME/service_account" "$BUILD_CONTEXT_DIR/jenkins/service_account"
+fi
+
+# Locate base image version from .current_version file.
+if [ -f "$GRPC_ROOT/tools/dockerfile/interoptest/${BASE_NAME}.current_version" ]; then
+  BASE_IMAGE="$(cat "$GRPC_ROOT/tools/dockerfile/interoptest/${BASE_NAME}.current_version")"
 else
-  echo "WARNING: grpc-java not found, it won't be mounted to the docker container."
+  BASE_IMAGE="$(cat "$REPO_ROOT/tools/dockerfile/interoptest/${BASE_NAME}.current_version")"
 fi
 
-echo "GRPC_GO_ROOT: ${GRPC_GO_ROOT:=$(cd ../grpc-go && pwd)}"
-if [ -n "$GRPC_GO_ROOT" ]
-then
-  MOUNT_ARGS+=" -v $GRPC_GO_ROOT:/var/local/jenkins/grpc-go:ro"
-else
-  echo "WARNING: grpc-go not found, it won't be mounted to the docker container."
+COMMIT_LOG_FLAG=()
+if [ -n "${COMMIT_LOG_FILE:-}" ] && [ -f "$COMMIT_LOG_FILE" ]; then
+  cp "$COMMIT_LOG_FILE" "$BUILD_CONTEXT_DIR/commit_log"
+  COMMIT_LOG_FLAG=("--include-commit-log")
+elif [ -f "$GRPC_ROOT/commit_log" ]; then
+  cp "$GRPC_ROOT/commit_log" "$BUILD_CONTEXT_DIR/commit_log"
+  COMMIT_LOG_FLAG=("--include-commit-log")
 fi
 
-echo "GRPC_DART_ROOT: ${GRPC_DART_ROOT:=$(cd ../grpc-dart && pwd)}"
-if [ -n "$GRPC_DART_ROOT" ]
-then
-  MOUNT_ARGS+=" -v $GRPC_DART_ROOT:/var/local/jenkins/grpc-dart:ro"
-else
-  echo "WARNING: grpc-dart not found, it won't be mounted to the docker container."
+ENV_PROPAGATE_FILE="$REPO_ROOT/tools/run_tests/dockerize/docker_propagate_env.list"
+DOCKER_BUILD_ARGS=()
+if [ -f "$ENV_PROPAGATE_FILE" ]; then
+  while IFS= read -r env_var || [ -n "$env_var" ]; do
+    env_var="${env_var%%#*}"
+    env_var="${env_var// /}"
+    if [ -n "$env_var" ] && [ -n "${!env_var:-}" ]; then
+      DOCKER_BUILD_ARGS+=("--build-arg" "${env_var}=${!env_var}")
+    fi
+  done < "$ENV_PROPAGATE_FILE"
 fi
 
-echo "GRPC_NODE_ROOT: ${GRPC_NODE_ROOT:=$(cd ../grpc-node && pwd)}"
-if [ -n "$GRPC_NODE_ROOT" ]
-then
-  MOUNT_ARGS+=" -v $GRPC_NODE_ROOT:/var/local/jenkins/grpc-node:ro"
-else
-  echo "WARNING: grpc-node not found, it won't be mounted to the docker container."
-fi
+python3 "$REPO_ROOT/tools/run_tests/python_utils/interop_capabilities.py" \
+  --emit-dockerfile \
+  --base-name="$BASE_NAME" \
+  --base-image="$BASE_IMAGE" \
+  --release="${INTEROP_RELEASE:-master}" \
+  --propagate-env-file="$ENV_PROPAGATE_FILE" \
+  "${COMMIT_LOG_FLAG[@]}" > "$BUILD_CONTEXT_DIR/Dockerfile"
 
-echo "GRPC_DOTNET_ROOT: ${GRPC_DOTNET_ROOT:=$(cd ../grpc-dotnet && pwd)}"
-if [ -n "$GRPC_DOTNET_ROOT" ]
-then
-  MOUNT_ARGS+=" -v $GRPC_DOTNET_ROOT:/var/local/jenkins/grpc-dotnet:ro"
-else
-  echo "WARNING: grpc-dotnet not found, it won't be mounted to the docker container."
-fi
-
-# Mount service account dir if available.
-# If service_directory does not contain the service account JSON file,
-# some of the tests will fail.
-if [ -e "$HOME/service_account" ]
-then
-  MOUNT_ARGS+=" -v $HOME/service_account:/var/local/jenkins/service_account:ro"
-fi
-
-BASE_IMAGE_DIR="tools/dockerfile/interoptest/$BASE_NAME"
-# The exact base docker image to use and its version is determined by the corresponding .current_version file
-BASE_IMAGE="$(cat "${BASE_IMAGE_DIR}.current_version")"
-
-# If TTY is available, the running container can be conveniently terminated with Ctrl+C.
-if [[ -t 0 ]]; then
-  DOCKER_TTY_ARGS=("-it")
-else
-  # The input device on kokoro is not a TTY, so -it does not work.
-  DOCKER_TTY_ARGS=()
-fi
-
-CONTAINER_NAME="build_${BASE_NAME}_$(uuidgen)"
-
-# Prepare image for interop tests, commit it on success.
-# TODO: Figure out if is safe to eliminate the suppression. It's currently here
-# because $MOUNT_ARGS and $BUILD_INTEROP_DOCKER_EXTRA_ARGS can have legitimate
-# spaces, but the "correct" way to do this is to utilize proper arrays.
+# Single-pass docker build baking the build step and OCI metadata labels.
 # shellcheck disable=SC2086
-(docker run \
-  --cap-add SYS_PTRACE \
-  --env-file "tools/run_tests/dockerize/docker_propagate_env.list" \
-  "${DOCKER_TTY_ARGS[@]}" \
-  $MOUNT_ARGS \
-  $BUILD_INTEROP_DOCKER_EXTRA_ARGS \
-  --name="$CONTAINER_NAME" \
-  "$BASE_IMAGE" \
-  bash -l "/var/local/jenkins/grpc/tools/dockerfile/interoptest/$BASE_NAME/build_interop.sh" \
-  && docker commit "$CONTAINER_NAME" "$INTEROP_IMAGE" \
-  && echo "Successfully built image $INTEROP_IMAGE")
-EXITCODE=$?
+docker build \
+  --rm \
+  --tag "$INTEROP_IMAGE" \
+  "${DOCKER_BUILD_ARGS[@]}" \
+  ${BUILD_INTEROP_DOCKER_EXTRA_ARGS:-} \
+  "$BUILD_CONTEXT_DIR"
 
-# remove intermediate container, possibly killing it first
-docker rm -f "$CONTAINER_NAME"
-
-exit $EXITCODE
+echo "Successfully built image $INTEROP_IMAGE"

@@ -17,12 +17,8 @@
 from __future__ import print_function
 
 import argparse
-import atexit
-import json
 import multiprocessing
 import os
-import re
-import subprocess
 import sys
 import uuid
 
@@ -34,9 +30,30 @@ python_util_dir = os.path.abspath(
 )
 sys.path.append(python_util_dir)
 import dockerjob
+from interop_capabilities import (
+    CORE_INTEROP_TEST_CASES,
+    OCI_LABEL_CAPABILITIES,
+    OCI_LABEL_CLIENT_CMD,
+    OCI_LABEL_ENV,
+    OCI_LABEL_HTTP2_CLIENT_CMD,
+    OCI_LABEL_KEYS,
+    OCI_LABEL_RELEASE,
+    OCI_LABEL_SERVER_CMD,
+    OCI_LABEL_WORKDIR,
+    Capability,
+    OciImageMetadata,
+    ProdServerEndpoint,
+    get_matrix_image_metadata,
+    inspect_image_oci_labels,
+    resolve_image_metadata,
+)
 import jobset
 import report_utils
-import upload_test_results
+
+try:
+    import upload_test_results
+except ImportError:
+    upload_test_results = None
 
 _TEST_TIMEOUT_SECONDS = 60
 _PULL_IMAGE_TIMEOUT_SECONDS = 15 * 60
@@ -52,6 +69,11 @@ _RELEASES = sorted(
         )
     )
 )
+
+_MATRIX_PROD_SERVERS = [
+    ("default", "grpc-test.sandbox.googleapis.com", "grpc-test"),
+    ("gateway_v4", "grpc-test4.sandbox.googleapis.com", "grpc-test4"),
+]
 
 argp = argparse.ArgumentParser(description="Run interop tests.")
 argp.add_argument("-j", "--jobs", default=multiprocessing.cpu_count(), type=int)
@@ -112,6 +134,8 @@ argp.add_argument(
     help="The gateway to backend services.",
 )
 
+args = argp.parse_args([])
+
 
 def _get_test_images_for_lang(lang, release_arg, image_path_prefix):
     """Find docker images for a language across releases and runtimes.
@@ -149,92 +173,62 @@ def _get_test_images_for_lang(lang, release_arg, image_path_prefix):
     return images
 
 
-def _read_test_cases_file(lang, runtime, release):
-    """Read test cases from a bash-like file and return a list of commands"""
-    # Check to see if we need to use a particular version of test cases.
-    release_info = client_matrix.LANG_RELEASE_MATRIX[lang].get(release)
-    if release_info:
-        testcases_file = release_info.testcases_file
-    if not testcases_file:
-        # TODO(jtattermusch): remove the double-underscore, it is pointless
-        testcases_file = "%s__master" % lang
-
-    # For csharp, the testcases file used depends on the runtime
-    # TODO(jtattermusch): remove this odd special case
-    if lang == "csharp" and runtime == "csharpcoreclr":
-        testcases_file = testcases_file.replace("csharp_", "csharpcoreclr_")
-
-    testcases_filepath = os.path.join(
-        os.path.dirname(__file__), "testcases", testcases_file
-    )
-    lines = []
-    with open(testcases_filepath) as f:
-        for line in f.readlines():
-            line = re.sub("\\#.*$", "", line)  # remove hash comments
-            line = line.strip()
-            if line and not line.startswith("echo"):
-                # Each non-empty line is a treated as a test case command
-                lines.append(line)
-    return lines
-
-
 def _cleanup_docker_image(image):
     jobset.message("START", "Cleanup docker image %s" % image, do_newline=True)
     dockerjob.remove_image(image, skip_nonexistent=True)
 
 
-args = argp.parse_args()
-
-
-# caches test cases (list of JobSpec) loaded from file.  Keyed by lang and runtime.
-def _generate_test_case_jobspecs(lang, runtime, release, suite_name):
-    """Returns the list of test cases from testcase files per lang/release."""
-    testcase_lines = _read_test_cases_file(lang, runtime, release)
+def _generate_test_case_jobspecs(
+    lang,
+    runtime,
+    release,
+    suite_name,
+    image=None,
+    oci_labels=None,
+    server_host=None,
+    allow_flakes=None,
+):
+    """Generates matrix test JobSpecs from image OCI labels (or fallback catalog)."""
+    metadata = resolve_image_metadata(
+        lang=lang,
+        runtime=runtime,
+        release=release,
+        image=image,
+        oci_labels=oci_labels,
+    )
+    effective_server_host = (
+        server_host
+        if server_host is not None
+        else getattr(args, "server_host", "74.125.206.210")
+    )
+    effective_allow_flakes = (
+        allow_flakes
+        if allow_flakes is not None
+        else getattr(args, "allow_flakes", False)
+    )
 
     job_spec_list = []
-    for line in testcase_lines:
-        print("Creating jobspec with cmdline '{}'".format(line))
-        # TODO(jtattermusch): revisit the logic for updating test case commands
-        # what it currently being done seems fragile.
-
-        # Extract test case name from the command line
-        m = re.search(r"--test_case=(\w+)", line)
-        testcase_name = m.group(1) if m else "unknown_test"
-
-        # Extract the server name from the command line
-        if "--server_host_override=" in line:
-            m = re.search(
-                r"--server_host_override=((.*).sandbox.googleapis.com)", line
-            )
-        else:
-            m = re.search(r"--server_host=((.*).sandbox.googleapis.com)", line)
-        server = m.group(1) if m else "unknown_server"
-        server_short = m.group(2) if m else "unknown_server"
-
-        # replace original server_host argument
-        assert "--server_host=" in line
-        line = re.sub(
-            r"--server_host=[^ ]*", r"--server_host=%s" % args.server_host, line
-        )
-
-        # some interop tests don't set server_host_override (see #17407),
-        # but we need to use it if different host is set via cmdline args.
-        if args.server_host != server and not "--server_host_override=" in line:
-            line = re.sub(
-                r"(--server_host=[^ ]*)",
-                r"\1 --server_host_override=%s" % server,
-                line,
-            )
-
-        spec = jobset.JobSpec(
-            cmdline=line,
-            shortname="%s:%s:%s:%s"
-            % (suite_name, lang, server_short, testcase_name),
-            timeout_seconds=_TEST_TIMEOUT_SECONDS,
-            shell=True,
-            flake_retries=5 if args.allow_flakes else 0,
-        )
-        job_spec_list.append(spec)
+    for nickname, server_dns, server_short in _MATRIX_PROD_SERVERS:
+        prod_server = ProdServerEndpoint(nickname=nickname, host=server_dns)
+        for testcase_name in CORE_INTEROP_TEST_CASES:
+            if metadata.supports(
+                testcase_name, "tls"
+            ) and prod_server.supports(testcase_name, "tls"):
+                cmdline = metadata.build_matrix_client_cmdline(
+                    server_host=effective_server_host,
+                    server_dns=server_dns,
+                    test_case=testcase_name,
+                )
+                print("Creating jobspec with cmdline '{}'".format(cmdline))
+                spec = jobset.JobSpec(
+                    cmdline=cmdline,
+                    shortname="%s:%s:%s:%s"
+                    % (suite_name, lang, server_short, testcase_name),
+                    timeout_seconds=_TEST_TIMEOUT_SECONDS,
+                    shell=True,
+                    flake_retries=5 if effective_allow_flakes else 0,
+                )
+                job_spec_list.append(spec)
     return job_spec_list
 
 
@@ -257,7 +251,11 @@ def _test_release(lang, runtime, release, image, xml_report_tree, skip_tests):
     total_num_failures = 0
     suite_name = "%s__%s_%s" % (lang, runtime, release)
     job_spec_list = _generate_test_case_jobspecs(
-        lang, runtime, release, suite_name
+        lang,
+        runtime,
+        release,
+        suite_name,
+        image=image if not skip_tests else None,
     )
 
     if not job_spec_list:
@@ -344,20 +342,27 @@ def _run_tests_for_lang(lang, runtime, images, xml_report_tree):
     return total_num_failures
 
 
-languages = args.language if args.language != ["all"] else _LANGUAGES
-total_num_failures = 0
-_xml_report_tree = report_utils.new_junit_xml_tree()
-for lang in languages:
-    docker_images = _get_test_images_for_lang(
-        lang, args.release, args.docker_path
-    )
-    for runtime in sorted(docker_images.keys()):
-        total_num_failures += _run_tests_for_lang(
-            lang, runtime, docker_images[runtime], _xml_report_tree
+def main(cli_args=None):
+    global args
+    args = argp.parse_args(cli_args)
+    languages = args.language if args.language != ["all"] else _LANGUAGES
+    total_num_failures = 0
+    _xml_report_tree = report_utils.new_junit_xml_tree()
+    for lang in languages:
+        docker_images = _get_test_images_for_lang(
+            lang, args.release, args.docker_path
         )
+        for runtime in sorted(docker_images.keys()):
+            total_num_failures += _run_tests_for_lang(
+                lang, runtime, docker_images[runtime], _xml_report_tree
+            )
 
-report_utils.create_xml_report_file(_xml_report_tree, args.report_file)
+    report_utils.create_xml_report_file(_xml_report_tree, args.report_file)
 
-if total_num_failures:
-    sys.exit(1)
-sys.exit(0)
+    if total_num_failures:
+        sys.exit(1)
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

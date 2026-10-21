@@ -219,10 +219,25 @@ class RunInterop(test.test):
     def run_client(self):
         # We import here to ensure that our setuptools parent has had a chance to
         # edit the Python system path.
-        from tests.interop import client
+        if self.use_asyncio:
+            import asyncio
 
-        sys.argv[1:] = self.args.split()
-        client.test_interoperability(client.parse_interop_client_args(sys.argv))
+            from tests_aio.interop import client
+
+            sys.argv[1:] = self.args.split()
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            loop.run_until_complete(client.test_interoperability())
+        else:
+            from tests.interop import client
+
+            sys.argv[1:] = self.args.split()
+            client.test_interoperability(
+                client.parse_interop_client_args(sys.argv)
+            )
 
 
 class RunFork(test.test):
