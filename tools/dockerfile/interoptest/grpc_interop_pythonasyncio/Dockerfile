@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM debian:11
+ARG BASE_IMAGE=base
+FROM debian:11 AS base
 
 #=================
 # Basic C core dependencies
@@ -93,4 +94,16 @@ RUN curl -sSL -o ccache.tar.gz https://github.com/ccache/ccache/releases/downloa
     && make -j4 && make install \
     && cd ../.. \
     && rm -rf ccache-4.11.3 ccache.tar.gz
+
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+ARG GRPC_BUILD_ENABLE_CCACHE=""
+ARG CCACHE_SECONDARY_STORAGE=""
+LABEL release="${RELEASE_LABEL}"
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+COPY --from=grpc . /var/local/git/grpc
+RUN cd /var/local/git/grpc \
+  && tools/run_tests/run_tests.py -l python --compiler python3.9 -c opt --build_only
 

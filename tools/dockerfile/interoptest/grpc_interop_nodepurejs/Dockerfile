@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM debian:11
+ARG BASE_IMAGE=base
+FROM debian:11 AS base
 
 #=================
 # Basic C core dependencies
@@ -91,3 +92,12 @@ RUN git config --global protocol.file.allow always
 
 # Define the default command.
 CMD ["bash"]
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+LABEL release="${RELEASE_LABEL}"
+COPY --from=service_account --chown=appuser:appuser . /root/service_account/
+COPY --from=build_info --chown=appuser:appuser . /var/local/build_info/
+COPY --from=grpc_node --chown=appuser:appuser . /home/appuser/grpc-node
+RUN cd /home/appuser/grpc-node && ./setup_interop_purejs.sh
+

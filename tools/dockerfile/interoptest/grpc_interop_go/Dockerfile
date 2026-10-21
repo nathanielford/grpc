@@ -16,7 +16,8 @@
 # the following comment is a simple way to re-build the image with a new Go
 # version.
 # latest points to 1.23.1 at the time of building.
-FROM golang:latest
+ARG BASE_IMAGE=base
+FROM golang:latest AS base
 
 # Using login shell removes Go from path, so we add it.
 RUN ln -s /usr/local/go/bin/go /usr/local/bin
@@ -31,4 +32,15 @@ RUN git config --global protocol.file.allow always
 
 # Define the default command.
 CMD ["bash"]
+
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+LABEL release="${RELEASE_LABEL}"
+ENV GO111MODULE=on
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+COPY --from=grpc_go . /go/src/google.golang.org/grpc
+RUN (cd /go/src/google.golang.org/grpc/interop/client && go install) \
+  && (cd /go/src/google.golang.org/grpc/interop/server && go install)
 

@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM debian:11
+ARG BASE_IMAGE=base
+FROM debian:11 AS base
 
 #=================
 # Basic C core dependencies
@@ -117,4 +118,21 @@ RUN mkdir /var/local/jenkins
 
 # Define the default command.
 CMD ["bash"]
+
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+ARG GRPC_BUILD_ENABLE_CCACHE=""
+ARG CCACHE_SECONDARY_STORAGE=""
+LABEL release="${RELEASE_LABEL}"
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+COPY --from=grpc . /var/local/git/grpc
+RUN mkdir -p /usr/local/share/grpc \
+  && cp /var/local/git/grpc/etc/roots.pem /usr/local/share/grpc/roots.pem \
+  && mkdir -p /var/local/git/grpc/cmake/build \
+  && cd /var/local/git/grpc/cmake/build \
+  && cmake -DgRPC_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 ../.. \
+  && make interop_client interop_server -j4 \
+  && make http2_client -j4
 
