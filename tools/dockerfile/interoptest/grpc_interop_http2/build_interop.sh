@@ -29,3 +29,19 @@ cp -r /var/local/jenkins/service_account $HOME || true
 # compile the tests
 (cd /var/local/git/grpc/tools/http2_interop && go test -c)
 
+# Install standardized container entrypoints
+mkdir -p /interop
+cat << 'EOF' > /interop/client
+#!/bin/bash
+set -e
+cd /var/local/git/grpc
+exec tools/http2_interop/http2_interop.test -test.v "$@"
+EOF
+cat << 'EOF' > /interop/server
+#!/bin/bash
+set -e
+cd /var/local/git/grpc
+exec python test/http2_test/http2_test_server.py "$@"
+EOF
+chmod +x /interop/client /interop/server
+

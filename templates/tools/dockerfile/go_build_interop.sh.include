@@ -30,3 +30,40 @@ cp -r /var/local/jenkins/service_account $HOME || true
 # Build the interop client and server
 (cd src/google.golang.org/grpc/interop/client && go install)
 (cd src/google.golang.org/grpc/interop/server && go install)
+if [ -d src/google.golang.org/grpc/interop/http2 ]; then
+  (cd src/google.golang.org/grpc/interop/http2 && go build -o /go/bin/negative_http2_client negative_http2_client.go) || true
+fi
+
+# Install standardized container entrypoints
+mkdir -p /interop
+cat << 'EOF' > /interop/client
+#!/bin/bash
+set -e
+export GO111MODULE=on
+cd /go/src/google.golang.org/grpc/interop/client
+if [ -x /go/bin/client ]; then
+  exec /go/bin/client "$@"
+fi
+exec go run client.go "$@"
+EOF
+cat << 'EOF' > /interop/server
+#!/bin/bash
+set -e
+export GO111MODULE=on
+cd /go/src/google.golang.org/grpc/interop/server
+if [ -x /go/bin/server ]; then
+  exec /go/bin/server "$@"
+fi
+exec go run server.go "$@"
+EOF
+cat << 'EOF' > /interop/http2_client
+#!/bin/bash
+set -e
+export GO111MODULE=on
+cd /go/src/google.golang.org/grpc/interop/http2
+if [ -x /go/bin/negative_http2_client ]; then
+  exec /go/bin/negative_http2_client "$@"
+fi
+exec go run negative_http2_client.go "$@"
+EOF
+chmod +x /interop/client /interop/server /interop/http2_client

@@ -41,3 +41,19 @@ fi
 # Override RepositoryUrl to a URL to fix Source Link. The value doesn't matter.
 dotnet build --configuration Debug --output ./output/InteropTestsWebsite testassets/InteropTestsWebsite/InteropTestsWebsite.csproj -p:RepositoryUrl=https://github.com/grpc/grpc-dotnet.git -p:LatestFramework=true
 dotnet build --configuration Debug --output ./output/InteropTestsClient testassets/InteropTestsClient/InteropTestsClient.csproj -p:RepositoryUrl=https://github.com/grpc/grpc-dotnet.git -p:LatestFramework=true
+
+# Install standardized container entrypoints
+mkdir -p /interop
+cat << 'EOF' > /interop/client
+#!/bin/bash
+set -e
+cd /var/local/git/grpc-dotnet/output/InteropTestsClient
+exec dotnet exec InteropTestsClient.dll "$@"
+EOF
+cat << 'EOF' > /interop/server
+#!/bin/bash
+set -e
+cd /var/local/git/grpc-dotnet/output/InteropTestsWebsite
+exec dotnet exec InteropTestsWebsite.dll "$@"
+EOF
+chmod +x /interop/client /interop/server

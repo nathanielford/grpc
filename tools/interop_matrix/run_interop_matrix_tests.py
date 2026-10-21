@@ -36,7 +36,11 @@ sys.path.append(python_util_dir)
 import dockerjob
 import jobset
 import report_utils
-import upload_test_results
+
+try:
+    import upload_test_results
+except ImportError as e:
+    upload_test_results = None
 
 _TEST_TIMEOUT_SECONDS = 60
 _PULL_IMAGE_TIMEOUT_SECONDS = 15 * 60
@@ -111,6 +115,16 @@ argp.add_argument(
     nargs="?",
     help="The gateway to backend services.",
 )
+argp.add_argument(
+    "--contract_entrypoints",
+    default=False,
+    action="store_const",
+    const=True,
+    help=(
+        "Invoke the standardized /interop/client container entrypoint "
+        "instead of legacy release-specific commands."
+    ),
+)
 
 
 def _get_test_images_for_lang(lang, release_arg, image_path_prefix):
@@ -149,92 +163,59 @@ def _get_test_images_for_lang(lang, release_arg, image_path_prefix):
     return images
 
 
-def _read_test_cases_file(lang, runtime, release):
-    """Read test cases from a bash-like file and return a list of commands"""
-    # Check to see if we need to use a particular version of test cases.
-    release_info = client_matrix.LANG_RELEASE_MATRIX[lang].get(release)
-    if release_info:
-        testcases_file = release_info.testcases_file
-    if not testcases_file:
-        # TODO(jtattermusch): remove the double-underscore, it is pointless
-        testcases_file = "%s__master" % lang
-
-    # For csharp, the testcases file used depends on the runtime
-    # TODO(jtattermusch): remove this odd special case
-    if lang == "csharp" and runtime == "csharpcoreclr":
-        testcases_file = testcases_file.replace("csharp_", "csharpcoreclr_")
-
-    testcases_filepath = os.path.join(
-        os.path.dirname(__file__), "testcases", testcases_file
-    )
-    lines = []
-    with open(testcases_filepath) as f:
-        for line in f.readlines():
-            line = re.sub("\\#.*$", "", line)  # remove hash comments
-            line = line.strip()
-            if line and not line.startswith("echo"):
-                # Each non-empty line is a treated as a test case command
-                lines.append(line)
-    return lines
-
-
 def _cleanup_docker_image(image):
     jobset.message("START", "Cleanup docker image %s" % image, do_newline=True)
     dockerjob.remove_image(image, skip_nonexistent=True)
 
 
-args = argp.parse_args()
+args = argp.parse_args() if __name__ == "__main__" else argp.parse_args([])
 
 
-# caches test cases (list of JobSpec) loaded from file.  Keyed by lang and runtime.
-def _generate_test_case_jobspecs(lang, runtime, release, suite_name):
-    """Returns the list of test cases from testcase files per lang/release."""
-    testcase_lines = _read_test_cases_file(lang, runtime, release)
+def _generate_test_case_jobspecs(
+    lang,
+    runtime,
+    release,
+    suite_name,
+    server_host=None,
+    allow_flakes=None,
+    contract_entrypoints=None,
+):
+    """Programmatically generate JobSpec list for (lang, runtime, release)."""
+    resolved_server_host = (
+        server_host if server_host is not None else args.server_host
+    )
+    resolved_allow_flakes = (
+        allow_flakes if allow_flakes is not None else args.allow_flakes
+    )
+    resolved_contract = (
+        contract_entrypoints
+        if contract_entrypoints is not None
+        else args.contract_entrypoints
+    )
 
     job_spec_list = []
-    for line in testcase_lines:
-        print("Creating jobspec with cmdline '{}'".format(line))
-        # TODO(jtattermusch): revisit the logic for updating test case commands
-        # what it currently being done seems fragile.
-
-        # Extract test case name from the command line
-        m = re.search(r"--test_case=(\w+)", line)
-        testcase_name = m.group(1) if m else "unknown_test"
-
-        # Extract the server name from the command line
-        if "--server_host_override=" in line:
-            m = re.search(
-                r"--server_host_override=((.*).sandbox.googleapis.com)", line
+    for server_short, server_fqdn in client_matrix.INTEROP_MATRIX_SERVERS:
+        for testcase_name in client_matrix.INTEROP_MATRIX_TEST_CASES:
+            line = client_matrix.build_matrix_docker_cmdline(
+                lang=lang,
+                runtime=runtime,
+                release=release,
+                server_host=resolved_server_host,
+                server_host_override=server_fqdn,
+                test_case=testcase_name,
+                docker_image="$docker_image",
+                contract_entrypoints=resolved_contract,
             )
-        else:
-            m = re.search(r"--server_host=((.*).sandbox.googleapis.com)", line)
-        server = m.group(1) if m else "unknown_server"
-        server_short = m.group(2) if m else "unknown_server"
-
-        # replace original server_host argument
-        assert "--server_host=" in line
-        line = re.sub(
-            r"--server_host=[^ ]*", r"--server_host=%s" % args.server_host, line
-        )
-
-        # some interop tests don't set server_host_override (see #17407),
-        # but we need to use it if different host is set via cmdline args.
-        if args.server_host != server and not "--server_host_override=" in line:
-            line = re.sub(
-                r"(--server_host=[^ ]*)",
-                r"\1 --server_host_override=%s" % server,
-                line,
+            print("Creating jobspec with cmdline '{}'".format(line))
+            spec = jobset.JobSpec(
+                cmdline=line,
+                shortname="%s:%s:%s:%s"
+                % (suite_name, lang, server_short, testcase_name),
+                timeout_seconds=_TEST_TIMEOUT_SECONDS,
+                shell=True,
+                flake_retries=5 if resolved_allow_flakes else 0,
             )
-
-        spec = jobset.JobSpec(
-            cmdline=line,
-            shortname="%s:%s:%s:%s"
-            % (suite_name, lang, server_short, testcase_name),
-            timeout_seconds=_TEST_TIMEOUT_SECONDS,
-            shell=True,
-            flake_retries=5 if args.allow_flakes else 0,
-        )
-        job_spec_list.append(spec)
+            job_spec_list.append(spec)
     return job_spec_list
 
 
@@ -271,7 +252,7 @@ def _test_release(lang, runtime, release, image, xml_report_tree, skip_tests):
             maxjobs=args.jobs,
             skip_jobs=skip_tests,
         )
-        if args.bq_result_table and resultset:
+        if args.bq_result_table and resultset and upload_test_results:
             upload_test_results.upload_interop_results_to_bq(
                 resultset, args.bq_result_table
             )
@@ -344,20 +325,27 @@ def _run_tests_for_lang(lang, runtime, images, xml_report_tree):
     return total_num_failures
 
 
-languages = args.language if args.language != ["all"] else _LANGUAGES
-total_num_failures = 0
-_xml_report_tree = report_utils.new_junit_xml_tree()
-for lang in languages:
-    docker_images = _get_test_images_for_lang(
-        lang, args.release, args.docker_path
-    )
-    for runtime in sorted(docker_images.keys()):
-        total_num_failures += _run_tests_for_lang(
-            lang, runtime, docker_images[runtime], _xml_report_tree
+def main():
+    global args
+    args = argp.parse_args()
+    languages = args.language if args.language != ["all"] else _LANGUAGES
+    total_num_failures = 0
+    _xml_report_tree = report_utils.new_junit_xml_tree()
+    for lang in languages:
+        docker_images = _get_test_images_for_lang(
+            lang, args.release, args.docker_path
         )
+        for runtime in sorted(docker_images.keys()):
+            total_num_failures += _run_tests_for_lang(
+                lang, runtime, docker_images[runtime], _xml_report_tree
+            )
 
-report_utils.create_xml_report_file(_xml_report_tree, args.report_file)
+    report_utils.create_xml_report_file(_xml_report_tree, args.report_file)
 
-if total_num_failures:
-    sys.exit(1)
-sys.exit(0)
+    if total_num_failures:
+        sys.exit(1)
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

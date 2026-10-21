@@ -31,3 +31,19 @@ rvm --default use ruby-3.1.3
 
 # build Ruby interop client and server
 (cd src/ruby && gem install bundler && bundle && bundle exec rake compile)
+
+# Install standardized container entrypoints
+mkdir -p /interop
+cat << 'EOF' > /interop/client
+#!/bin/bash
+set -e
+cd /var/local/git/grpc
+exec tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/client.rb "$@"
+EOF
+cat << 'EOF' > /interop/server
+#!/bin/bash
+set -e
+cd /var/local/git/grpc
+exec tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/server.rb "$@"
+EOF
+chmod +x /interop/client /interop/server

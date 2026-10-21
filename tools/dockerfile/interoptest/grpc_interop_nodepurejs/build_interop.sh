@@ -29,3 +29,16 @@ cd ~/grpc-node
 
 # build Node interop client & server
 ./setup_interop_purejs.sh
+
+# Install standardized container entrypoints
+INTEROP_DIR="/interop"
+mkdir -p "$INTEROP_DIR" 2>/dev/null || INTEROP_DIR="$HOME/interop"
+mkdir -p "$INTEROP_DIR"
+cat << 'EOF' > "$INTEROP_DIR/client"
+#!/bin/bash
+set -e
+cd /home/appuser/grpc-node
+exec packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh \
+  node --require ./test/fixtures/js_js test/interop/interop_client.js "$@"
+EOF
+chmod +x "$INTEROP_DIR/client"

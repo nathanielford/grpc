@@ -124,63 +124,35 @@ argp.add_argument(
     ),
 )
 
-args = argp.parse_args()
+args = argp.parse_args() if __name__ == "__main__" else argp.parse_args([])
 
 
-def add_files_to_image(image, with_files, label=None):
-    """Add files to a docker image.
-
-    image: docker image name, i.e. grpc_interop_java:26328ad8
-    with_files: additional files to include in the docker image.
-    label: label string to attach to the image.
-    """
-    tag_idx = image.find(":")
-    if tag_idx == -1:
-        jobset.message(
-            "FAILED", "invalid docker image %s" % image, do_newline=True
-        )
-        sys.exit(1)
-    orig_tag = "%s_" % image
-    subprocess.check_output(["docker", "tag", image, orig_tag])
-
-    lines = ["FROM " + orig_tag]
-    if label:
-        lines.append("LABEL %s" % label)
-
-    temp_dir = tempfile.mkdtemp()
-    atexit.register(lambda: subprocess.call(["rm", "-rf", temp_dir]))
-
-    # Copy with_files inside the tmp directory, which will be the docker build
-    # context.
-    for f in with_files:
-        shutil.copy(f, temp_dir)
-        lines.append("COPY %s %s/" % (os.path.basename(f), _BUILD_INFO))
-
-    # Create a Dockerfile.
-    with open(os.path.join(temp_dir, "Dockerfile"), "w") as f:
-        f.write("\n".join(lines))
-
-    jobset.message("START", "Repackaging %s" % image, do_newline=True)
-    build_cmd = ["docker", "build", "--rm", "--tag", image, temp_dir]
-    subprocess.check_output(build_cmd)
-    dockerjob.remove_image(orig_tag, skip_nonexistent=True)
-
-
-def build_image_jobspec(runtime, env, gcr_tag, stack_base):
+def build_image_jobspec(runtime, env, gcr_tag, stack_base, lang=None):
     """Build interop docker image for a language with runtime.
 
     runtime: a <lang><version> string, for example go1.8.
     env:     dictionary of env to passed to the build script.
     gcr_tag: the tag for the docker image (i.e. v1.3.0).
     stack_base: the local gRPC repo path.
+    lang:    language key in client_matrix (optional, inferred from runtime if omitted).
     """
     basename = "grpc_interop_%s" % runtime
     tag = "%s/%s:%s" % (args.docker_path, basename, gcr_tag)
     build_env = {"INTEROP_IMAGE": tag, "BASE_NAME": basename}
+    if gcr_tag != "master":
+        build_env["INTEROP_IMAGE_LABEL"] = "release=%s" % gcr_tag
+        if stack_base:
+            commit_log = os.path.join(stack_base, "commit_log")
+            build_env["BUILD_INFO_COMMIT_LOG"] = commit_log
     build_env.update(env)
     image_builder_path = _IMAGE_BUILDER
-    if client_matrix.should_build_docker_interop_image_from_release_tag(lang):
-        image_builder_path = os.path.join(stack_base, _IMAGE_BUILDER)
+    resolved_lang = lang or runtime
+    if stack_base and client_matrix.should_build_docker_interop_image_from_release_tag(
+        resolved_lang
+    ):
+        candidate_builder = os.path.join(stack_base, _IMAGE_BUILDER)
+        if os.path.exists(candidate_builder):
+            image_builder_path = candidate_builder
     build_job = jobset.JobSpec(
         cmdline=[image_builder_path],
         environ=build_env,
@@ -245,7 +217,7 @@ def build_all_images_for_release(lang, release):
         env[var] = stack_base
 
     for runtime in client_matrix.get_runtimes_for_lang_release(lang, release):
-        job = build_image_jobspec(runtime, env, release, stack_base)
+        job = build_image_jobspec(runtime, env, release, stack_base, lang=lang)
         docker_images.append(job.tag)
         build_jobs.append(job)
 
@@ -267,12 +239,6 @@ def build_all_images_for_release(lang, release):
         "All docker images built for %s at %s." % (lang, release),
         do_newline=True,
     )
-
-    if release != "master":
-        commit_log = os.path.join(stack_base, "commit_log")
-        if os.path.exists(commit_log):
-            for image in docker_images:
-                add_files_to_image(image, [commit_log], "release=%s" % release)
     return docker_images
 
 
@@ -401,25 +367,39 @@ def checkout_grpc_stack(lang, release):
     return stack_base
 
 
-languages = args.language if args.language != ["all"] else _LANGUAGES
-for lang in languages:
-    docker_images = build_all_images_for_lang(lang)
-    for image in docker_images:
-        if args.upload_images:
-            jobset.message("START", "Uploading %s" % image, do_newline=True)
-            # docker image name must be in the format <docker_path>/<image>:<gcr_tag>
-            assert image.startswith(args.docker_path) and image.find(":") != -1
-            # Add a tag to exclude the image from the GCP Vulnerability Scanner.
-            (image_name, tag_name) = image.rsplit(":", 1)
-            alternate_image = (
-                f"{image_name}:infrastructure-public-image-{tag_name}"
-            )
-            subprocess.call(["docker", "image", "tag", image, alternate_image])
-            subprocess.call(["gcloud", "docker", "--", "push", image])
-            subprocess.call(["gcloud", "docker", "--", "push", alternate_image])
-        else:
-            # Uploading (and overwriting images) by default can easily break things.
-            print(
-                "Not uploading image %s, run with --upload_images to upload."
-                % image
-            )
+def main():
+    global args
+    args = argp.parse_args()
+    languages = args.language if args.language != ["all"] else _LANGUAGES
+    for lang in languages:
+        docker_images = build_all_images_for_lang(lang)
+        for image in docker_images:
+            if args.upload_images:
+                jobset.message("START", "Uploading %s" % image, do_newline=True)
+                # docker image name must be in the format <docker_path>/<image>:<gcr_tag>
+                assert (
+                    image.startswith(args.docker_path)
+                    and image.find(":") != -1
+                )
+                # Add a tag to exclude the image from the GCP Vulnerability Scanner.
+                (image_name, tag_name) = image.rsplit(":", 1)
+                alternate_image = (
+                    f"{image_name}:infrastructure-public-image-{tag_name}"
+                )
+                subprocess.call(
+                    ["docker", "image", "tag", image, alternate_image]
+                )
+                subprocess.call(["gcloud", "docker", "--", "push", image])
+                subprocess.call(
+                    ["gcloud", "docker", "--", "push", alternate_image]
+                )
+            else:
+                # Uploading (and overwriting images) by default can easily break things.
+                print(
+                    "Not uploading image %s, run with --upload_images to"
+                    " upload." % image
+                )
+
+
+if __name__ == "__main__":
+    main()

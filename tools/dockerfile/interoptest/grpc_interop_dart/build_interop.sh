@@ -26,3 +26,19 @@ cp -r /var/local/jenkins/service_account $HOME || true
 cd /var/local/git/grpc-dart/interop
 # De-flake attempt: run the cmd one more time in case of transient failure
 /usr/lib/dart/bin/dart pub get --verbose || /usr/lib/dart/bin/dart pub get --verbose
+
+# Install standardized container entrypoints
+mkdir -p /interop
+cat << 'EOF' > /interop/client
+#!/bin/bash
+set -e
+cd /var/local/git/grpc-dart/interop
+exec dart bin/client.dart "$@"
+EOF
+cat << 'EOF' > /interop/server
+#!/bin/bash
+set -e
+cd /var/local/git/grpc-dart/interop
+exec dart bin/server.dart "$@"
+EOF
+chmod +x /interop/client /interop/server

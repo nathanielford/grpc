@@ -46,3 +46,25 @@ java.util.logging.ConsoleHandler.level = ALL
 io.grpc.netty.NettyClientHandler = ALL
 io.grpc.netty.NettyServerHandler = ALL" > /var/local/grpc_java_logging/logconf.txt
 
+# Install standardized container entrypoints
+mkdir -p /interop
+cat << 'EOF' > /interop/client
+#!/bin/bash
+set -e
+cd /var/local/git/grpc-java
+exec ./run-test-client.sh "$@"
+EOF
+cat << 'EOF' > /interop/server
+#!/bin/bash
+set -e
+cd /var/local/git/grpc-java
+exec ./run-test-server.sh "$@"
+EOF
+cat << 'EOF' > /interop/http2_client
+#!/bin/bash
+set -e
+cd /var/local/git/grpc-java
+exec ./interop-testing/build/install/grpc-interop-testing/bin/http2-client "$@"
+EOF
+chmod +x /interop/client /interop/server /interop/http2_client
+

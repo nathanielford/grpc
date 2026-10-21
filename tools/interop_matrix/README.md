@@ -21,8 +21,7 @@ The steps are:
   - `gcloud artifacts docker images list us-docker.pkg.dev/grpc-testing/testing-images-public/grpc_interop_java --include-tags` should show an image entry with tag `v1.9.9`.
   - images can also be viewed in https://pantheon.corp.google.com/artifacts/docker/grpc-testing/us/testing-images-public
 - Verify the just-created docker client image would pass backward compatibility test (it should).  For example,
-  - `docker pull us-docker.pkg.dev/grpc-testing/testing-images-public/grpc_interop_java:v1.9.9` followed by
-  - `docker_image=us-docker.pkg.dev/grpc-testing/testing-images-public/grpc_interop_java:v1.9.9 tools/interop_matrix/testcases/java__master`
+  - `tools/interop_matrix/run_interop_matrix_tests.py --language java --release v1.9.9`
 - Commit the change and create a PR to upstream/master.
 - Trigger an adhoc run of interop matrix tests: https://fusion.corp.google.com/projectanalysis/summary/KOKORO/prod:grpc%2Fcore%2Fexperimental%2Flinux%2Fgrpc_interop_matrix_adhoc
 - Once tests pass, request a PR review.
@@ -31,32 +30,28 @@ For more details on each step, refer to sections below.
 
 ## Instructions for adding new language/runtimes
 
-- Create new `Dockerfile.template`, `build_interop.sh.template` for the language/runtime under `template/tools/dockerfile/`.
+- Create new `Dockerfile.template`, `build_interop.sh.template` for the language/runtime under `template/tools/dockerfile/` ensuring `/interop/client` (and `/interop/server`, `/interop/http2_client` if applicable) are installed.
 - Run `tools/buildgen/generate_projects.sh` to create corresponding files under `tools/dockerfile/`.
 - Add language/runtimes to `client_matrix.py` following existing language/runtimes examples.
 - Run `tools/interop_matrix/create_matrix_images.py` which will build (and upload) images to AR.
 
-## Instructions for creating new test cases
-
-- Create test cases by running `LANG=<lang> [RELEASE=<release>] ./create_testcases.sh`.  For example,
-  - `LANG=go ./create_testcases.sh` will generate `./testcases/go__master`, which is also a functional bash script.
-  - `LANG=go KEEP_IMAGE=1 ./create_testcases.sh` will generate `./testcases/go__master` and keep the local docker image so it can be invoked simply via `./testcases/go__master`.  Note: remove local docker images manually afterwards with `docker rmi <image_id>`.
-- Stage and commit the generated test case file `./testcases/<lang>__<release>`.
-
 ## Instructions for running test cases against AR docker images
 
+- Test cases are generated programmatically by `tools/interop_matrix/run_interop_matrix_tests.py` using `client_matrix.py` (no static bash testcase scripts are required).
 - Run `tools/interop_matrix/run_interop_matrix_tests.py`.  Useful options:
   - `--release` specifies a git release tag.  Defaults to `--release=all`.  Make sure the AR images with the tag have been created using `create_matrix_images.py` above.
   - `--language` specifies a language.  Defaults to `--language=all`.
-  For example, To test all languages for all gRPC releases across all runtimes, do `tools/interop_matrix/run_interop_matrix_test.py --release=all`.
+  - `--contract_entrypoints` invokes `/interop/client` directly inside contract-compliant images.
+  For example, to test all languages for all gRPC releases across all runtimes, do `tools/interop_matrix/run_interop_matrix_tests.py --release=all`.
 - The output for all the test cases is recorded in a junit style xml file (defaults to 'report.xml').
 
 ## Instructions for running test cases against an AR image manually
 
 - Download a docker image from AR.  For example: `docker pull us-docker.pkg.dev/grpc-testing/testing-images-public/grpc_interop_go1.8:v1.16.0`.
-- Run test cases by specifying `docker_image` variable inline with the test case script created above.
-For example:
-  - `docker_image=us-docker.pkg.dev/grpc-testing/testing-images-public/grpc_interop_go1.8:v1.16.0 ./testcases/go__master` will run go__master test cases against `go1.8` with gRPC release `v1.16.0` docker image in AR.
+- Images built with the standardized container contract expose `/interop/client`:
+  - `docker run -i --rm=true --net=host <image> /interop/client --server_host=74.125.206.210 --server_host_override=grpc-test.sandbox.googleapis.com --server_port=443 --use_tls=true --test_case=large_unary`
+- Or run all matrix test cases for a specific language and release via:
+  - `tools/interop_matrix/run_interop_matrix_tests.py --language=go --release=v1.16.0 --keep`
 
 Note:
 - File path starting with `tools/` or `template/` are relative to the grpc repo root dir.  File path starting with `./` are relative to current directory (`tools/interop_matrix`).

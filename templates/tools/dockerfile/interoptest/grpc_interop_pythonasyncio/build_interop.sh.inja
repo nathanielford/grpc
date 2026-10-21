@@ -1,1 +1,3 @@
 {% include "../../python_build_interop.sh.include" %}
+sed -i 's/run_interop --client/run_interop --use-asyncio --client/' /interop/client
+sed -i 's/run_interop --server/run_interop --use-asyncio --server/' /interop/server

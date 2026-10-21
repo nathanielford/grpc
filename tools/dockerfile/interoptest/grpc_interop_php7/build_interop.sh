@@ -51,3 +51,19 @@ then
   echo "Failed to do composer install"
   exit 1
 fi
+
+# Install standardized container entrypoints
+mkdir -p /interop
+cat << 'EOF' > /interop/client
+#!/bin/bash
+set -e
+cd /var/local/git/grpc
+exec src/php/bin/interop_client.sh "$@"
+EOF
+cat << 'EOF' > /interop/server
+#!/bin/bash
+set -e
+cd /var/local/git/grpc
+exec src/php/bin/interop_server.sh "$@"
+EOF
+chmod +x /interop/client /interop/server

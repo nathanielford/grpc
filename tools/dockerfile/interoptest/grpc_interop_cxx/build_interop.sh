@@ -38,3 +38,34 @@ cd cmake/build
 cmake -DgRPC_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 ../..
 make interop_client interop_server -j4
 make http2_client -j4
+
+# Install standardized container entrypoints
+mkdir -p /interop
+cat << 'EOF' > /interop/client
+#!/bin/bash
+set -e
+cd /var/local/git/grpc
+if [ -x cmake/build/interop_client ]; then
+  exec cmake/build/interop_client "$@"
+fi
+exec bins/opt/interop_client "$@"
+EOF
+cat << 'EOF' > /interop/server
+#!/bin/bash
+set -e
+cd /var/local/git/grpc
+if [ -x cmake/build/interop_server ]; then
+  exec cmake/build/interop_server "$@"
+fi
+exec bins/opt/interop_server "$@"
+EOF
+cat << 'EOF' > /interop/http2_client
+#!/bin/bash
+set -e
+cd /var/local/git/grpc
+if [ -x cmake/build/http2_client ]; then
+  exec cmake/build/http2_client "$@"
+fi
+exec bins/opt/http2_client "$@"
+EOF
+chmod +x /interop/client /interop/server /interop/http2_client

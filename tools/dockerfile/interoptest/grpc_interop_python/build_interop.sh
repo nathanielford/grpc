@@ -31,3 +31,31 @@ cd /var/local/git/grpc
 # interop tests only run using python3.9 currently (and python build is slow)
 tools/run_tests/run_tests.py -l python --compiler python3.9 -c opt --build_only
 
+# Install standardized container entrypoints
+mkdir -p /interop
+cat << 'EOF' > /interop/client
+#!/bin/bash
+set -e
+cd /var/local/git/grpc
+export LD_LIBRARY_PATH="/var/local/git/grpc/libs/opt"
+export PYTHONPATH="/var/local/git/grpc/src/python/gens"
+exec py39/bin/python src/python/grpcio_tests/setup.py run_interop --client --args="$*"
+EOF
+cat << 'EOF' > /interop/server
+#!/bin/bash
+set -e
+cd /var/local/git/grpc
+export LD_LIBRARY_PATH="/var/local/git/grpc/libs/opt"
+export PYTHONPATH="/var/local/git/grpc/src/python/gens"
+exec py39/bin/python src/python/grpcio_tests/setup.py run_interop --server --args="$*"
+EOF
+cat << 'EOF' > /interop/http2_client
+#!/bin/bash
+set -e
+cd /var/local/git/grpc
+export LD_LIBRARY_PATH="/var/local/git/grpc/libs/opt"
+export PYTHONPATH="/var/local/git/grpc/src/python/gens"
+exec py39/bin/python src/python/grpcio_tests/tests/http2/negative_http2_client.py "$@"
+EOF
+chmod +x /interop/client /interop/server /interop/http2_client
+
