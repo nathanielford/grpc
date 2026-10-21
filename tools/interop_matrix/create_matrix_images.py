@@ -18,6 +18,7 @@ from __future__ import print_function
 
 import argparse
 import atexit
+from collections import OrderedDict
 import multiprocessing
 import os
 import shutil
@@ -25,8 +26,13 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(
+    0, os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+)
 # Language Runtime Matrix
 import client_matrix
+from interop_bake.bake_manifest import generate_bake_hcl
 
 python_util_dir = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "../run_tests/python_utils")
@@ -124,7 +130,20 @@ argp.add_argument(
     ),
 )
 
-args = argp.parse_args()
+argp.add_argument(
+    "--emit-bake",
+    "--emit_bake",
+    dest="emit_bake",
+    default="",
+    type=str,
+    help=(
+        "Write generated declarative Docker Buildx Bake HCL manifest for "
+        "matrix images to the specified file path."
+    ),
+)
+
+args = argp.parse_args([])
+lang = "cxx"
 
 
 def add_files_to_image(image, with_files, label=None):
@@ -166,7 +185,7 @@ def add_files_to_image(image, with_files, label=None):
     dockerjob.remove_image(orig_tag, skip_nonexistent=True)
 
 
-def build_image_jobspec(runtime, env, gcr_tag, stack_base):
+def build_image_jobspec(runtime, env, gcr_tag, stack_base, lang_name=None):
     """Build interop docker image for a language with runtime.
 
     runtime: a <lang><version> string, for example go1.8.
@@ -174,12 +193,15 @@ def build_image_jobspec(runtime, env, gcr_tag, stack_base):
     gcr_tag: the tag for the docker image (i.e. v1.3.0).
     stack_base: the local gRPC repo path.
     """
+    active_lang = lang_name if lang_name is not None else lang
     basename = "grpc_interop_%s" % runtime
     tag = "%s/%s:%s" % (args.docker_path, basename, gcr_tag)
     build_env = {"INTEROP_IMAGE": tag, "BASE_NAME": basename}
     build_env.update(env)
     image_builder_path = _IMAGE_BUILDER
-    if client_matrix.should_build_docker_interop_image_from_release_tag(lang):
+    if client_matrix.should_build_docker_interop_image_from_release_tag(
+        active_lang
+    ):
         image_builder_path = os.path.join(stack_base, _IMAGE_BUILDER)
     build_job = jobset.JobSpec(
         cmdline=[image_builder_path],
@@ -189,6 +211,37 @@ def build_image_jobspec(runtime, env, gcr_tag, stack_base):
     )
     build_job.tag = tag
     return build_job
+
+
+def generate_matrix_bake_for_release(
+    lang_name, release, docker_path=None, grpc_root=None, env=None
+):
+    """Generates a Buildx Bake HCL manifest for all runtimes of (lang_name, release)."""
+    docker_path = docker_path or args.docker_path
+    grpc_root = grpc_root or os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../..")
+    )
+    safename_to_tag = OrderedDict()
+    extra_tags = OrderedDict()
+    for runtime in client_matrix.get_runtimes_for_lang_release(
+        lang_name, release
+    ):
+        basename = "grpc_interop_%s" % runtime
+        primary_tag = "%s/%s:%s" % (docker_path, basename, release)
+        alt_tag = "%s/%s:infrastructure-public-image-%s" % (
+            docker_path,
+            basename,
+            release,
+        )
+        safename_to_tag[runtime] = primary_tag
+        extra_tags[runtime] = [alt_tag]
+    return generate_bake_hcl(
+        safename_to_tag,
+        grpc_root=grpc_root,
+        env=env,
+        release=release,
+        extra_tags_by_safename=extra_tags,
+    )
 
 
 def build_all_images_for_lang(lang):
@@ -245,9 +298,18 @@ def build_all_images_for_release(lang, release):
         env[var] = stack_base
 
     for runtime in client_matrix.get_runtimes_for_lang_release(lang, release):
-        job = build_image_jobspec(runtime, env, release, stack_base)
+        job = build_image_jobspec(
+            runtime, env, release, stack_base, lang_name=lang
+        )
         docker_images.append(job.tag)
         build_jobs.append(job)
+
+    if args.emit_bake:
+        bake_hcl = generate_matrix_bake_for_release(
+            lang, release, docker_path=args.docker_path, env=env
+        )
+        with open(args.emit_bake, "w") as f:
+            f.write(bake_hcl)
 
     jobset.message("START", "Building interop docker images.", do_newline=True)
     print("Jobs to run: \n%s\n" % "\n".join(str(j) for j in build_jobs))
@@ -401,25 +463,39 @@ def checkout_grpc_stack(lang, release):
     return stack_base
 
 
-languages = args.language if args.language != ["all"] else _LANGUAGES
-for lang in languages:
-    docker_images = build_all_images_for_lang(lang)
-    for image in docker_images:
-        if args.upload_images:
-            jobset.message("START", "Uploading %s" % image, do_newline=True)
-            # docker image name must be in the format <docker_path>/<image>:<gcr_tag>
-            assert image.startswith(args.docker_path) and image.find(":") != -1
-            # Add a tag to exclude the image from the GCP Vulnerability Scanner.
-            (image_name, tag_name) = image.rsplit(":", 1)
-            alternate_image = (
-                f"{image_name}:infrastructure-public-image-{tag_name}"
-            )
-            subprocess.call(["docker", "image", "tag", image, alternate_image])
-            subprocess.call(["gcloud", "docker", "--", "push", image])
-            subprocess.call(["gcloud", "docker", "--", "push", alternate_image])
-        else:
-            # Uploading (and overwriting images) by default can easily break things.
-            print(
-                "Not uploading image %s, run with --upload_images to upload."
-                % image
-            )
+def main(argv=None):
+    global args, lang
+    args = argp.parse_args(argv)
+    languages = args.language if args.language != ["all"] else _LANGUAGES
+    for lang in languages:
+        docker_images = build_all_images_for_lang(lang)
+        for image in docker_images:
+            if args.upload_images:
+                jobset.message("START", "Uploading %s" % image, do_newline=True)
+                # docker image name must be in the format <docker_path>/<image>:<gcr_tag>
+                assert (
+                    image.startswith(args.docker_path)
+                    and image.find(":") != -1
+                )
+                # Add a tag to exclude the image from the GCP Vulnerability Scanner.
+                (image_name, tag_name) = image.rsplit(":", 1)
+                alternate_image = (
+                    f"{image_name}:infrastructure-public-image-{tag_name}"
+                )
+                subprocess.call(
+                    ["docker", "image", "tag", image, alternate_image]
+                )
+                subprocess.call(["gcloud", "docker", "--", "push", image])
+                subprocess.call(
+                    ["gcloud", "docker", "--", "push", alternate_image]
+                )
+            else:
+                # Uploading (and overwriting images) by default can easily break things.
+                print(
+                    "Not uploading image %s, run with --upload_images to"
+                    " upload." % image
+                )
+
+
+if __name__ == "__main__":
+    main()

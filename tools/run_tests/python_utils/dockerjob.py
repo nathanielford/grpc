@@ -35,8 +35,8 @@ def random_name(base_name):
 
 
 def docker_kill(cid):
-    """Kills a docker container. Returns True if successful."""
-    return (
+    """Kills and removes a docker container synchronously. Returns True if successful."""
+    killed = (
         subprocess.call(
             ["docker", "kill", str(cid)],
             stdin=subprocess.PIPE,
@@ -45,6 +45,63 @@ def docker_kill(cid):
         )
         == 0
     )
+    subprocess.call(
+        ["docker", "rm", "-f", str(cid)],
+        stdin=subprocess.PIPE,
+        stdout=_DEVNULL,
+        stderr=subprocess.STDOUT,
+    )
+    return killed
+
+
+def create_network(network_name=None):
+    """Creates an isolated Docker bridge network for interop services."""
+    if not network_name:
+        network_name = random_name("grpc_interop_net")
+    rc = subprocess.call(
+        ["docker", "network", "create", "--driver", "bridge", network_name],
+        stdin=subprocess.PIPE,
+        stdout=_DEVNULL,
+        stderr=subprocess.STDOUT,
+    )
+    if rc != 0:
+        raise RuntimeError("Failed to create docker network %s" % network_name)
+    return network_name
+
+
+def remove_network(network_name):
+    """Removes a Docker bridge network."""
+    if not network_name:
+        return True
+    return (
+        subprocess.call(
+            ["docker", "network", "rm", str(network_name)],
+            stdin=subprocess.PIPE,
+            stdout=_DEVNULL,
+            stderr=subprocess.STDOUT,
+        )
+        == 0
+    )
+
+
+class DockerNetwork:
+    """Context manager for an isolated Docker bridge network."""
+
+    def __init__(self, name=None, enabled=True):
+        self.name = name or random_name("grpc_interop_net")
+        self.enabled = enabled
+        self._created = False
+
+    def __enter__(self):
+        if self.enabled:
+            create_network(self.name)
+            self._created = True
+        return self.name if self.enabled else None
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._created:
+            remove_network(self.name)
+            self._created = False
 
 
 def docker_mapped_port(cid, port, timeout_seconds=15):
@@ -99,7 +156,7 @@ def wait_for_healthy(cid, shortname, timeout_seconds):
                 ],
                 stderr=_DEVNULL,
             ).decode()
-            if output.strip("\n") == "healthy":
+            if output.strip().strip('"') == "healthy":
                 return
         except subprocess.CalledProcessError as e:
             pass

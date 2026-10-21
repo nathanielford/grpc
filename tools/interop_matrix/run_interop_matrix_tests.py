@@ -26,6 +26,7 @@ import subprocess
 import sys
 import uuid
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # Language Runtime Matrix
 import client_matrix
 
@@ -36,7 +37,11 @@ sys.path.append(python_util_dir)
 import dockerjob
 import jobset
 import report_utils
-import upload_test_results
+
+try:
+    import upload_test_results
+except ImportError as e:
+    upload_test_results = None
 
 _TEST_TIMEOUT_SECONDS = 60
 _PULL_IMAGE_TIMEOUT_SECONDS = 15 * 60
@@ -183,7 +188,7 @@ def _cleanup_docker_image(image):
     dockerjob.remove_image(image, skip_nonexistent=True)
 
 
-args = argp.parse_args()
+args = argp.parse_args([])
 
 
 # caches test cases (list of JobSpec) loaded from file.  Keyed by lang and runtime.
@@ -344,20 +349,27 @@ def _run_tests_for_lang(lang, runtime, images, xml_report_tree):
     return total_num_failures
 
 
-languages = args.language if args.language != ["all"] else _LANGUAGES
-total_num_failures = 0
-_xml_report_tree = report_utils.new_junit_xml_tree()
-for lang in languages:
-    docker_images = _get_test_images_for_lang(
-        lang, args.release, args.docker_path
-    )
-    for runtime in sorted(docker_images.keys()):
-        total_num_failures += _run_tests_for_lang(
-            lang, runtime, docker_images[runtime], _xml_report_tree
+def main(argv=None):
+    global args
+    args = argp.parse_args(argv)
+    languages = args.language if args.language != ["all"] else _LANGUAGES
+    total_num_failures = 0
+    _xml_report_tree = report_utils.new_junit_xml_tree()
+    for lang in languages:
+        docker_images = _get_test_images_for_lang(
+            lang, args.release, args.docker_path
         )
+        for runtime in sorted(docker_images.keys()):
+            total_num_failures += _run_tests_for_lang(
+                lang, runtime, docker_images[runtime], _xml_report_tree
+            )
 
-report_utils.create_xml_report_file(_xml_report_tree, args.report_file)
+    report_utils.create_xml_report_file(_xml_report_tree, args.report_file)
 
-if total_num_failures:
-    sys.exit(1)
-sys.exit(0)
+    if total_num_failures:
+        sys.exit(1)
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

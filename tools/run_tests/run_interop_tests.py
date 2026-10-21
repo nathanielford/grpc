@@ -32,6 +32,20 @@ import uuid
 
 import six
 
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+os.chdir(ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+
+from interop_bake.bake_manifest import deduplicate_language_builds
+from interop_bake.bake_manifest import generate_bake_hcl
+from interop_bake.bake_manifest import is_buildx_bake_available
+from interop_bake.bake_manifest import safename_to_bake_target
+from interop_bake.compose_manifest import DEFAULT_COMPOSE_NETWORK
+from interop_bake.compose_manifest import generate_compose_yaml
+from interop_bake.compose_manifest import server_docker_healthcheck_args
+from interop_bake.compose_manifest import server_has_runnable_tests
+from interop_bake.compose_manifest import server_service_name
 import python_utils.dockerjob as dockerjob
 import python_utils.jobset as jobset
 import python_utils.report_utils as report_utils
@@ -44,9 +58,6 @@ except ImportError as e:
 
 # Docker doesn't clean up after itself, so we do it on exit.
 atexit.register(lambda: subprocess.call(["stty", "echo"]))
-
-ROOT = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), "../.."))
-os.chdir(ROOT)
 
 _DEFAULT_SERVER_PORT = 8080
 
@@ -921,13 +932,8 @@ def auth_options(
 
 
 def _job_kill_handler(job):
-    if job._spec.container_name:
+    if getattr(job._spec, "container_name", None):
         dockerjob.docker_kill(job._spec.container_name)
-        # When the job times out and we decide to kill it,
-        # we need to wait a before restarting the job
-        # to prevent "container name already in use" error.
-        # TODO(jtattermusch): figure out a cleaner way to this.
-        time.sleep(2)
 
 
 def cloud_to_prod_jobspec(
@@ -942,8 +948,11 @@ def cloud_to_prod_jobspec(
     service_account_key_file=None,
     default_service_account=None,
     transport_security="tls",
+    allow_flakes=None,
 ):
     """Creates jobspec for cloud-to-prod interop test"""
+    if allow_flakes is None:
+        allow_flakes = bool(getattr(args, "allow_flakes", False))
     container_name = None
     cmdargs = [
         "--server_host=%s" % server_host,
@@ -1019,8 +1028,8 @@ def cloud_to_prod_jobspec(
             transport_security,
         ),
         timeout_seconds=_TEST_TIMEOUT,
-        flake_retries=4 if args.allow_flakes else 0,
-        timeout_retries=2 if args.allow_flakes else 0,
+        flake_retries=4 if allow_flakes else 0,
+        timeout_retries=2 if allow_flakes else 0,
         kill_handler=_job_kill_handler,
     )
     if docker_image:
@@ -1037,8 +1046,12 @@ def cloud_to_cloud_jobspec(
     docker_image=None,
     transport_security="tls",
     manual_cmd_log=None,
+    docker_network=None,
+    allow_flakes=None,
 ):
     """Creates jobspec for cloud-to-cloud interop test"""
+    if allow_flakes is None:
+        allow_flakes = bool(getattr(args, "allow_flakes", False))
     interop_only_options = [
         "--server_host_override=foo.test.google.fr",
         "--use_test_ca=true",
@@ -1096,17 +1109,21 @@ def cloud_to_cloud_jobspec(
         cwd = language.client_cwd
 
     environ = language.global_env()
+    container_name = None
     if docker_image and language.safename != "objc":
         # we can't run client in docker for objc.
         container_name = dockerjob.random_name(
             "interop_client_%s" % language.safename
+        )
+        net_arg = (
+            "--network=%s" % docker_network if docker_network else "--net=host"
         )
         cmdline = docker_run_cmdline(
             cmdline,
             image=docker_image,
             environ=environ,
             cwd=cwd,
-            docker_args=["--net=host", "--name=%s" % container_name],
+            docker_args=[net_arg, "--name=%s" % container_name],
         )
         if manual_cmd_log is not None:
             if manual_cmd_log == []:
@@ -1123,8 +1140,8 @@ def cloud_to_cloud_jobspec(
         shortname="cloud_to_cloud:%s:%s_server:%s:%s"
         % (language, server_name, test_case, transport_security),
         timeout_seconds=_TEST_TIMEOUT,
-        flake_retries=4 if args.allow_flakes else 0,
-        timeout_retries=2 if args.allow_flakes else 0,
+        flake_retries=4 if allow_flakes else 0,
+        timeout_retries=2 if allow_flakes else 0,
         kill_handler=_job_kill_handler,
     )
     if docker_image:
@@ -1133,7 +1150,11 @@ def cloud_to_cloud_jobspec(
 
 
 def server_jobspec(
-    language, docker_image, transport_security="tls", manual_cmd_log=None
+    language,
+    docker_image,
+    transport_security="tls",
+    manual_cmd_log=None,
+    docker_network=None,
 ):
     """Create jobspec for running a server"""
     container_name = dockerjob.random_name(
@@ -1155,6 +1176,11 @@ def server_jobspec(
     cmdline = bash_cmdline(language.server_cmd(server_cmd))
     environ = language.global_env()
     docker_args = ["--name=%s" % container_name]
+    if docker_network:
+        docker_args += [
+            "--network=%s" % docker_network,
+            "--network-alias=%s" % server_service_name(language),
+        ]
     if language.safename == "http2":
         # we are running the http2 interop server. Open next N ports beginning
         # with the server port. These ports are used for http2 interop test
@@ -1165,14 +1191,6 @@ def server_jobspec(
                 for i in range(len(_HTTP2_SERVER_TEST_CASES))
             )
         )
-        # Enable docker's healthcheck mechanism.
-        # This runs a Python script inside the container every second. The script
-        # pings the http2 server to verify it is ready. The 'health-retries' flag
-        # specifies the number of consecutive failures before docker will report
-        # the container's status as 'unhealthy'. Prior to the first 'health_retries'
-        # failures or the first success, the status will be 'starting'. 'docker ps'
-        # or 'docker inspect' can be used to see the health of the container on the
-        # command line.
         docker_args += [
             "--health-cmd=python test/http2_test/http2_server_health_check.py "
             "--server_host=%s --server_port=%d"
@@ -1184,6 +1202,10 @@ def server_jobspec(
 
     else:
         docker_args += ["-p", str(_DEFAULT_SERVER_PORT)]
+        if docker_network:
+            docker_args += server_docker_healthcheck_args(
+                language, _DEFAULT_SERVER_PORT
+            )
 
     docker_cmdline = docker_run_cmdline(
         cmdline,
@@ -1205,6 +1227,7 @@ def server_jobspec(
         timeout_seconds=30 * 60,
     )
     server_job.container_name = container_name
+    server_job.service_name = server_service_name(language)
     return server_job
 
 
@@ -1224,6 +1247,52 @@ def build_interop_image_jobspec(language, tag=None):
     )
     build_job.tag = tag
     return build_job
+
+
+def build_bake_image_jobspec(bake_hcl_path, targets=None, tags_by_safename=None):
+    """Creates a single declarative `docker buildx bake` JobSpec for all target images."""
+    target_args = list(targets) if targets else ["default"]
+    cmdline = [
+        "docker",
+        "buildx",
+        "bake",
+        "-f",
+        bake_hcl_path,
+        "--load",
+    ] + target_args
+    build_job = jobset.JobSpec(
+        cmdline=cmdline,
+        environ={},
+        shortname="build_docker_bake",
+        timeout_seconds=45 * 60,
+    )
+    build_job.bake_hcl_path = bake_hcl_path
+    build_job.tags_by_safename = dict(tags_by_safename or {})
+    return build_job
+
+
+def filter_runnable_servers(
+    requested_servers, client_languages, http2_interop=False
+):
+    """Filters out servers that have 0 runnable test cases for the active suite."""
+    active_servers = set()
+    for s in sorted(requested_servers):
+        server_lang = _LANGUAGES.get(str(s))
+        if server_has_runnable_tests(
+            server_name=str(s),
+            server_language=server_lang,
+            client_languages=client_languages,
+            test_cases=_TEST_CASES,
+            http2_interop=http2_interop,
+            http2_test_cases=_HTTP2_TEST_CASES,
+        ):
+            active_servers.add(s)
+        else:
+            print(
+                'Skipping server "%s": 0 runnable test cases for selected clients.'
+                % s
+            )
+    return active_servers
 
 
 def aggregate_http2_results(stdout):
@@ -1431,199 +1500,455 @@ argp.add_argument(
     nargs="?",
     help="Upload test results to a specified BQ table.",
 )
-args = argp.parse_args()
-
-servers = set(
-    s
-    for s in itertools.chain.from_iterable(
-        _SERVERS if x == "all" else [x] for x in args.server
-    )
+argp.add_argument(
+    "--emit-bake",
+    "--emit_bake",
+    dest="emit_bake",
+    default="",
+    type=str,
+    help=(
+        "Write generated declarative Docker Buildx Bake HCL manifest "
+        "(docker-bake.hcl) to the specified file path."
+    ),
 )
-# ALTS servers are only available for certain languages.
-if args.transport_security == "alts":
-    servers = servers.intersection(_SERVERS_FOR_ALTS_TEST_CASES)
-
-if args.use_docker:
-    if not args.travis:
-        print("Seen --use_docker flag, will run interop tests under docker.")
-        print("")
-        print(
-            "IMPORTANT: The changes you are testing need to be locally"
-            " committed"
-        )
-        print(
-            "because only the committed changes in the current branch will be"
-        )
-        print("copied to the docker environment.")
-        time.sleep(5)
-
-if args.manual_run and not args.use_docker:
-    print("--manual_run is only supported with --use_docker option enabled.")
-    sys.exit(1)
-
-if not args.use_docker and servers:
-    print(
-        "Running interop servers is only supported with --use_docker option"
-        " enabled."
-    )
-    sys.exit(1)
-
-# we want to include everything but objc in 'all'
-# because objc won't run on non-mac platforms
-all_but_objc = set(six.iterkeys(_LANGUAGES)) - set(["objc"])
-languages = set(
-    _LANGUAGES[l]
-    for l in itertools.chain.from_iterable(
-        all_but_objc if x == "all" else [x] for x in args.language
-    )
+argp.add_argument(
+    "--emit-compose",
+    "--emit_compose",
+    dest="emit_compose",
+    default="",
+    type=str,
+    help=(
+        "Write generated Docker Compose v2 topology manifest "
+        "(docker-compose.interop.yaml) to the specified file path."
+    ),
 )
-# ALTS interop clients are only available for certain languages.
-if args.transport_security == "alts":
-    alts_languages = set(_LANGUAGES[l] for l in _LANGUAGES_FOR_ALTS_TEST_CASES)
-    languages = languages.intersection(alts_languages)
+argp.add_argument(
+    "--network-mode",
+    "--network_mode",
+    dest="network_mode",
+    choices=["auto", "bridge", "host"],
+    default="auto",
+    help=(
+        "Container networking mode for cloud-to-cloud servers/clients: "
+        "'bridge' uses a dedicated Docker bridge network with deterministic "
+        "service hostnames (interop-server-<lang>:8080); 'host' uses legacy "
+        "--net=host and ephemeral port polling; 'auto' selects bridge for "
+        "containerized execution and host for manual_run/host-only clients."
+    ),
+)
+argp.add_argument(
+    "--no-bake",
+    "--no_bake",
+    dest="no_bake",
+    default=False,
+    action="store_const",
+    const=True,
+    help=(
+        "Disable `docker buildx bake` multi-image builds and fall back to "
+        "per-image `build_interop_image.sh`."
+    ),
+)
+argp.add_argument(
+    "--dry-run",
+    "--dry_run",
+    dest="dry_run",
+    default=False,
+    action="store_const",
+    const=True,
+    help="Generate Bake/Compose manifests and jobspecs without executing jobs.",
+)
 
-languages_http2_clients_for_http2_server_interop = set()
-if args.http2_server_interop:
-    languages_http2_clients_for_http2_server_interop = set(
+# Default parsed args when imported as a library module; overridden in main().
+args = argp.parse_args([])
+
+
+def main(argv=None):
+    global args
+    args = argp.parse_args(argv)
+
+    servers = set(
+        s
+        for s in itertools.chain.from_iterable(
+            _SERVERS if x == "all" else [x] for x in args.server
+        )
+    )
+    # ALTS servers are only available for certain languages.
+    if args.transport_security == "alts":
+        servers = servers.intersection(_SERVERS_FOR_ALTS_TEST_CASES)
+
+    if args.use_docker:
+        if not args.travis and not args.dry_run and not args.emit_bake and not args.emit_compose:
+            print("Seen --use_docker flag, will run interop tests under docker.")
+            print("")
+            print(
+                "IMPORTANT: The changes you are testing need to be locally"
+                " committed"
+            )
+            print(
+                "because only the committed changes in the current branch will"
+                " be"
+            )
+            print("copied to the docker environment.")
+            time.sleep(5)
+
+    if args.manual_run and not args.use_docker:
+        print(
+            "--manual_run is only supported with --use_docker option enabled."
+        )
+        sys.exit(1)
+
+    if not args.use_docker and servers:
+        print(
+            "Running interop servers is only supported with --use_docker option"
+            " enabled."
+        )
+        sys.exit(1)
+
+    # we want to include everything but objc in 'all'
+    # because objc won't run on non-mac platforms
+    all_but_objc = set(six.iterkeys(_LANGUAGES)) - set(["objc"])
+    languages = set(
         _LANGUAGES[l]
-        for l in _LANGUAGES_WITH_HTTP2_CLIENTS_FOR_HTTP2_SERVER_TEST_CASES
-        if "all" in args.language or l in args.language
+        for l in itertools.chain.from_iterable(
+            all_but_objc if x == "all" else [x] for x in args.language
+        )
     )
+    # ALTS interop clients are only available for certain languages.
+    if args.transport_security == "alts":
+        alts_languages = set(
+            _LANGUAGES[l] for l in _LANGUAGES_FOR_ALTS_TEST_CASES
+        )
+        languages = languages.intersection(alts_languages)
 
-http2Interop = Http2Client() if args.http2_interop else None
-http2InteropServer = Http2Server() if args.http2_server_interop else None
+    # Filter out servers that have 0 runnable test cases (e.g., pythonasyncio).
+    if servers:
+        servers = filter_runnable_servers(
+            servers, languages, http2_interop=args.http2_interop
+        )
 
-docker_images = {}
-if args.use_docker:
-    # languages for which to build docker images
-    languages_to_build = set(
-        _LANGUAGES[k]
-        for k in set([str(l) for l in languages] + [s for s in servers])
-    )
-    languages_to_build = (
-        languages_to_build | languages_http2_clients_for_http2_server_interop
-    )
-
-    if args.http2_interop:
-        languages_to_build.add(http2Interop)
-
+    languages_http2_clients_for_http2_server_interop = set()
     if args.http2_server_interop:
-        languages_to_build.add(http2InteropServer)
-
-    build_jobs = []
-    for l in languages_to_build:
-        if str(l) == "objc":
-            # we don't need to build a docker image for objc
-            continue
-        job = build_interop_image_jobspec(l)
-        docker_images[str(l)] = job.tag
-        build_jobs.append(job)
-
-    if build_jobs:
-        jobset.message(
-            "START", "Building interop docker images.", do_newline=True
-        )
-        if args.verbose:
-            print("Jobs to run: \n%s\n" % "\n".join(str(j) for j in build_jobs))
-
-        num_failures, build_resultset = jobset.run(
-            build_jobs, newline_on_success=True, maxjobs=args.jobs
+        languages_http2_clients_for_http2_server_interop = set(
+            _LANGUAGES[l]
+            for l in _LANGUAGES_WITH_HTTP2_CLIENTS_FOR_HTTP2_SERVER_TEST_CASES
+            if "all" in args.language or l in args.language
         )
 
-        report_utils.render_junit_xml_report(
-            build_resultset, _DOCKER_BUILD_XML_REPORT
+    http2Interop = Http2Client() if args.http2_interop else None
+    http2InteropServer = Http2Server() if args.http2_server_interop else None
+
+    docker_images = {}
+    safename_to_tag = {}
+    if args.use_docker or args.emit_bake:
+        # languages for which to build docker images
+        languages_to_build = set(
+            _LANGUAGES[k]
+            for k in set([str(l) for l in languages] + [s for s in servers])
+        )
+        languages_to_build = (
+            languages_to_build
+            | languages_http2_clients_for_http2_server_interop
         )
 
-        if num_failures == 0:
+        if args.http2_interop:
+            languages_to_build.add(http2Interop)
+
+        if args.http2_server_interop:
+            languages_to_build.add(http2InteropServer)
+
+        safename_to_tag, language_to_tag, safename_to_languages = (
+            deduplicate_language_builds(languages_to_build)
+        )
+        if args.use_docker:
+            docker_images.update(language_to_tag)
+
+        bake_hcl_content = generate_bake_hcl(safename_to_tag, ROOT)
+        if args.emit_bake:
+            emit_bake_abs = os.path.abspath(args.emit_bake)
+            emit_bake_dir = os.path.dirname(emit_bake_abs)
+            if emit_bake_dir and not os.path.exists(emit_bake_dir):
+                os.makedirs(emit_bake_dir)
+            with open(emit_bake_abs, "w") as f:
+                f.write(bake_hcl_content)
+            print("Docker Buildx Bake manifest written to %s" % args.emit_bake)
+
+        if args.use_docker and safename_to_tag and not args.dry_run:
+            # Build deduplicated language images: prefer a single declarative
+            # `docker buildx bake` invocation, with automatic fallback to
+            # deduplicated `build_interop_image.sh` jobs.
+            use_bake = not args.no_bake and is_buildx_bake_available()
+            build_jobs = []
+            for safename, tag in safename_to_tag.items():
+                primary_lang_name = safename_to_languages[safename][0]
+                lang_obj = (
+                    http2Interop
+                    if primary_lang_name == "http2" and http2Interop
+                    else (
+                        http2InteropServer
+                        if primary_lang_name == "http2"
+                        else _LANGUAGES[primary_lang_name]
+                    )
+                )
+                job = build_interop_image_jobspec(lang_obj, tag=tag)
+                build_jobs.append(job)
+
             jobset.message(
-                "SUCCESS",
-                "All docker images built successfully.",
-                do_newline=True,
+                "START", "Building interop docker images.", do_newline=True
             )
-        else:
-            jobset.message(
-                "FAILED",
-                "Failed to build interop docker images.",
-                do_newline=True,
+
+            num_failures = 0
+            build_resultset = {}
+            ran_bake = False
+            if use_bake:
+                temp_bake_fd, temp_bake_path = tempfile.mkstemp(
+                    prefix="docker-bake-interop-", suffix=".hcl"
+                )
+                try:
+                    with os.fdopen(temp_bake_fd, "w") as f:
+                        f.write(bake_hcl_content)
+                    bake_job = build_bake_image_jobspec(
+                        temp_bake_path, tags_by_safename=safename_to_tag
+                    )
+                    if args.verbose:
+                        print("Bake job to run: \n%s\n" % bake_job)
+                    bake_failures, bake_results = jobset.run(
+                        [bake_job], newline_on_success=True, maxjobs=1
+                    )
+                    if bake_failures == 0:
+                        ran_bake = True
+                        bake_res_list = bake_results.get(
+                            bake_job.shortname, []
+                        )
+                        for job in build_jobs:
+                            build_resultset[job.shortname] = bake_res_list
+                    else:
+                        print(
+                            "WARNING: docker buildx bake failed; falling back "
+                            "to per-image build_interop_image.sh."
+                        )
+                finally:
+                    if os.path.exists(temp_bake_path):
+                        os.unlink(temp_bake_path)
+
+            if not ran_bake:
+                if args.verbose:
+                    print(
+                        "Jobs to run: \n%s\n"
+                        % "\n".join(str(j) for j in build_jobs)
+                    )
+                num_failures, build_resultset = jobset.run(
+                    build_jobs, newline_on_success=True, maxjobs=args.jobs
+                )
+
+            report_utils.render_junit_xml_report(
+                build_resultset, _DOCKER_BUILD_XML_REPORT
             )
-            for image in six.itervalues(docker_images):
-                dockerjob.remove_image(image, skip_nonexistent=True)
-            sys.exit(1)
 
-server_manual_cmd_log = [] if args.manual_run else None
-client_manual_cmd_log = [] if args.manual_run else None
+            if num_failures == 0:
+                jobset.message(
+                    "SUCCESS",
+                    "All docker images built successfully.",
+                    do_newline=True,
+                )
+            else:
+                jobset.message(
+                    "FAILED",
+                    "Failed to build interop docker images.",
+                    do_newline=True,
+                )
+                for image in set(six.itervalues(docker_images)):
+                    dockerjob.remove_image(image, skip_nonexistent=True)
+                sys.exit(1)
 
-# Start interop servers.
-server_jobs = {}
-server_addresses = {}
-try:
-    for s in servers:
-        lang = str(s)
-        spec = server_jobspec(
-            _LANGUAGES[lang],
-            docker_images.get(lang),
-            args.transport_security,
-            manual_cmd_log=server_manual_cmd_log,
-        )
-        if not args.manual_run:
-            job = dockerjob.DockerJob(spec)
-            server_jobs[lang] = job
-            server_addresses[lang] = (
-                "localhost",
-                job.mapped_port(_DEFAULT_SERVER_PORT),
+    server_manual_cmd_log = [] if args.manual_run else None
+    client_manual_cmd_log = [] if args.manual_run else None
+
+    use_bridge_network = (
+        args.use_docker
+        and not args.manual_run
+        and args.network_mode in ("auto", "bridge")
+        and bool(servers or args.http2_server_interop)
+    )
+    has_host_only_client = any(str(l) == "objc" for l in languages)
+
+    # Start interop servers.
+    server_jobs = {}
+    server_specs = {}
+    server_addresses = {}
+    host_server_addresses = {}
+    network_ctx = dockerjob.DockerNetwork(
+        enabled=use_bridge_network and not args.dry_run
+    )
+    active_network = network_ctx.__enter__()
+    if use_bridge_network and args.dry_run:
+        active_network = DEFAULT_COMPOSE_NETWORK
+
+    try:
+        for s in sorted(servers):
+            lang = str(s)
+            spec = server_jobspec(
+                _LANGUAGES[lang],
+                docker_images.get(lang, "grpc_interop_%s:latest" % _LANGUAGES[lang].safename),
+                args.transport_security,
+                manual_cmd_log=server_manual_cmd_log,
+                docker_network=active_network,
             )
-        else:
-            # don't run the server, set server port to a placeholder value
-            server_addresses[lang] = ("localhost", "${SERVER_PORT}")
+            server_specs[lang] = spec
+            if not args.manual_run and not args.dry_run:
+                job = dockerjob.DockerJob(spec)
+                server_jobs[lang] = job
+                if active_network:
+                    job.wait_for_healthy(timeout_seconds=180)
+                    server_addresses[lang] = (
+                        server_service_name(_LANGUAGES[lang]),
+                        _DEFAULT_SERVER_PORT,
+                    )
+                    if has_host_only_client:
+                        host_server_addresses[lang] = (
+                            "localhost",
+                            job.mapped_port(_DEFAULT_SERVER_PORT),
+                        )
+                else:
+                    server_addresses[lang] = (
+                        "localhost",
+                        job.mapped_port(_DEFAULT_SERVER_PORT),
+                    )
+            elif args.dry_run:
+                if active_network:
+                    server_addresses[lang] = (
+                        server_service_name(_LANGUAGES[lang]),
+                        _DEFAULT_SERVER_PORT,
+                    )
+                    host_server_addresses[lang] = (
+                        "localhost",
+                        _DEFAULT_SERVER_PORT,
+                    )
+                else:
+                    server_addresses[lang] = ("localhost", _DEFAULT_SERVER_PORT)
+            else:
+                # don't run the server, set server port to a placeholder value
+                server_addresses[lang] = ("localhost", "${SERVER_PORT}")
 
-    http2_server_job = None
-    if args.http2_server_interop:
-        # launch a HTTP2 server emulator that creates edge cases
-        lang = str(http2InteropServer)
-        spec = server_jobspec(
-            http2InteropServer,
-            docker_images.get(lang),
-            manual_cmd_log=server_manual_cmd_log,
-        )
-        if not args.manual_run:
-            http2_server_job = dockerjob.DockerJob(spec)
-            server_jobs[lang] = http2_server_job
-        else:
-            # don't run the server, set server port to a placeholder value
-            server_addresses[lang] = ("localhost", "${SERVER_PORT}")
+        http2_server_job = None
+        if args.http2_server_interop:
+            # launch a HTTP2 server emulator that creates edge cases
+            lang = str(http2InteropServer)
+            spec = server_jobspec(
+                http2InteropServer,
+                docker_images.get(lang, "grpc_interop_http2:latest"),
+                manual_cmd_log=server_manual_cmd_log,
+                docker_network=active_network,
+            )
+            server_specs[lang] = spec
+            if not args.manual_run and not args.dry_run:
+                http2_server_job = dockerjob.DockerJob(spec)
+                server_jobs[lang] = http2_server_job
+            elif not args.dry_run:
+                # don't run the server, set server port to a placeholder value
+                server_addresses[lang] = ("localhost", "${SERVER_PORT}")
 
-    jobs = []
-    if args.cloud_to_prod:
-        if args.transport_security not in ["tls"]:
-            print("TLS is always enabled for cloud_to_prod scenarios.")
-        for server_host_nickname in args.prod_servers:
-            for language in languages:
-                for test_case in _TEST_CASES:
-                    if not test_case in language.unimplemented_test_cases():
+        jobs = []
+        if args.cloud_to_prod:
+            if args.transport_security not in ["tls"]:
+                print("TLS is always enabled for cloud_to_prod scenarios.")
+            for server_host_nickname in args.prod_servers:
+                for language in languages:
+                    for test_case in _TEST_CASES:
+                        if not test_case in language.unimplemented_test_cases():
+                            if (
+                                not test_case
+                                in _SKIP_ADVANCED
+                                + _SKIP_COMPRESSION
+                                + _SKIP_SPECIAL_STATUS_MESSAGE
+                                + _ORCA_TEST_CASES
+                            ):
+                                for (
+                                    transport_security
+                                ) in args.custom_credentials_type:
+                                    # google_default_credentials not yet supported by all languages
+                                    if (
+                                        transport_security
+                                        == "google_default_credentials"
+                                        and str(language)
+                                        not in [
+                                            "c++",
+                                            "go",
+                                            "java",
+                                            "javaokhttp",
+                                        ]
+                                    ):
+                                        continue
+                                    # compute_engine_channel_creds not yet supported by all languages
+                                    if (
+                                        transport_security
+                                        == "compute_engine_channel_creds"
+                                        and str(language)
+                                        not in ["go", "java", "javaokhttp"]
+                                    ):
+                                        continue
+                                    test_job = cloud_to_prod_jobspec(
+                                        language,
+                                        test_case,
+                                        server_host_nickname,
+                                        prod_servers[server_host_nickname],
+                                        google_default_creds_use_key_file=args.google_default_creds_use_key_file,
+                                        docker_image=docker_images.get(
+                                            str(language)
+                                        ),
+                                        manual_cmd_log=client_manual_cmd_log,
+                                        service_account_key_file=args.service_account_key_file,
+                                        default_service_account=args.default_service_account,
+                                        transport_security=transport_security,
+                                    )
+                                    jobs.append(test_job)
+                if args.http2_interop:
+                    for test_case in _HTTP2_TEST_CASES:
+                        test_job = cloud_to_prod_jobspec(
+                            http2Interop,
+                            test_case,
+                            server_host_nickname,
+                            prod_servers[server_host_nickname],
+                            google_default_creds_use_key_file=args.google_default_creds_use_key_file,
+                            docker_image=docker_images.get(str(http2Interop)),
+                            manual_cmd_log=client_manual_cmd_log,
+                            service_account_key_file=args.service_account_key_file,
+                            default_service_account=args.default_service_account,
+                            transport_security=args.transport_security,
+                        )
+                        jobs.append(test_job)
+
+        if args.cloud_to_prod_auth:
+            if args.transport_security not in ["tls"]:
+                print("TLS is always enabled for cloud_to_prod scenarios.")
+            for server_host_nickname in args.prod_servers:
+                for language in languages:
+                    for test_case in _AUTH_TEST_CASES:
                         if (
-                            not test_case
-                            in _SKIP_ADVANCED
-                            + _SKIP_COMPRESSION
-                            + _SKIP_SPECIAL_STATUS_MESSAGE
-                            + _ORCA_TEST_CASES
+                            not args.skip_compute_engine_creds
+                            or not compute_engine_creds_required(
+                                language, test_case
+                            )
                         ):
-                            for (
-                                transport_security
-                            ) in args.custom_credentials_type:
-                                # google_default_credentials not yet supported by all languages
-                                if (
-                                    transport_security
-                                    == "google_default_credentials"
-                                    and str(language)
-                                    not in ["c++", "go", "java", "javaokhttp"]
+                            if (
+                                not test_case
+                                in language.unimplemented_test_cases()
+                            ):
+                                if test_case == _GOOGLE_DEFAULT_CREDS_TEST_CASE:
+                                    transport_security = (
+                                        "google_default_credentials"
+                                    )
+                                elif (
+                                    test_case
+                                    == _COMPUTE_ENGINE_CHANNEL_CREDS_TEST_CASE
                                 ):
-                                    continue
-                                # compute_engine_channel_creds not yet supported by all languages
+                                    transport_security = (
+                                        "compute_engine_channel_creds"
+                                    )
+                                else:
+                                    transport_security = "tls"
                                 if (
                                     transport_security
-                                    == "compute_engine_channel_creds"
-                                    and str(language)
-                                    not in ["go", "java", "javaokhttp"]
+                                    not in args.custom_credentials_type
                                 ):
                                     continue
                                 test_job = cloud_to_prod_jobspec(
@@ -1635,223 +1960,225 @@ try:
                                     docker_image=docker_images.get(
                                         str(language)
                                     ),
+                                    auth=True,
                                     manual_cmd_log=client_manual_cmd_log,
                                     service_account_key_file=args.service_account_key_file,
                                     default_service_account=args.default_service_account,
                                     transport_security=transport_security,
                                 )
                                 jobs.append(test_job)
+        override_server_names = set()
+        for server in args.override_server:
+            server_name = server[0]
+            (server_host, server_port) = server[1].split(":")
+            server_addresses[server_name] = (server_host, server_port)
+            override_server_names.add(server_name)
+
+        for server_name, server_address in list(server_addresses.items()):
+            (server_host, server_port) = server_address
+            server_language = _LANGUAGES.get(server_name, None)
+            skip_server = []  # test cases unimplemented by server
+            if server_language:
+                skip_server = server_language.unimplemented_test_cases_server()
+            server_net = (
+                None if server_name in override_server_names else active_network
+            )
+            for language in languages:
+                target_host, target_port = server_host, server_port
+                client_net = server_net
+                if str(language) == "objc" and server_name in host_server_addresses:
+                    target_host, target_port = host_server_addresses[server_name]
+                    client_net = None
+                for test_case in _TEST_CASES:
+                    if not test_case in language.unimplemented_test_cases():
+                        if not test_case in skip_server:
+                            test_job = cloud_to_cloud_jobspec(
+                                language,
+                                test_case,
+                                server_name,
+                                target_host,
+                                target_port,
+                                docker_image=docker_images.get(str(language)),
+                                transport_security=args.transport_security,
+                                manual_cmd_log=client_manual_cmd_log,
+                                docker_network=client_net,
+                            )
+                            jobs.append(test_job)
+
             if args.http2_interop:
                 for test_case in _HTTP2_TEST_CASES:
-                    test_job = cloud_to_prod_jobspec(
+                    if server_name == "go":
+                        # TODO(carl-mastrangelo): Reenable after https://github.com/grpc/grpc-go/issues/434
+                        continue
+                    test_job = cloud_to_cloud_jobspec(
                         http2Interop,
                         test_case,
-                        server_host_nickname,
-                        prod_servers[server_host_nickname],
-                        google_default_creds_use_key_file=args.google_default_creds_use_key_file,
+                        server_name,
+                        server_host,
+                        server_port,
                         docker_image=docker_images.get(str(http2Interop)),
-                        manual_cmd_log=client_manual_cmd_log,
-                        service_account_key_file=args.service_account_key_file,
-                        default_service_account=args.default_service_account,
                         transport_security=args.transport_security,
+                        manual_cmd_log=client_manual_cmd_log,
+                        docker_network=server_net,
                     )
                     jobs.append(test_job)
 
-    if args.cloud_to_prod_auth:
-        if args.transport_security not in ["tls"]:
-            print("TLS is always enabled for cloud_to_prod scenarios.")
-        for server_host_nickname in args.prod_servers:
-            for language in languages:
-                for test_case in _AUTH_TEST_CASES:
-                    if (
-                        not args.skip_compute_engine_creds
-                        or not compute_engine_creds_required(
-                            language, test_case
-                        )
-                    ):
-                        if not test_case in language.unimplemented_test_cases():
-                            if test_case == _GOOGLE_DEFAULT_CREDS_TEST_CASE:
-                                transport_security = (
-                                    "google_default_credentials"
-                                )
-                            elif (
-                                test_case
-                                == _COMPUTE_ENGINE_CHANNEL_CREDS_TEST_CASE
-                            ):
-                                transport_security = (
-                                    "compute_engine_channel_creds"
-                                )
-                            else:
-                                transport_security = "tls"
-                            if (
-                                transport_security
-                                not in args.custom_credentials_type
-                            ):
-                                continue
-                            test_job = cloud_to_prod_jobspec(
-                                language,
-                                test_case,
-                                server_host_nickname,
-                                prod_servers[server_host_nickname],
-                                google_default_creds_use_key_file=args.google_default_creds_use_key_file,
-                                docker_image=docker_images.get(str(language)),
-                                auth=True,
-                                manual_cmd_log=client_manual_cmd_log,
-                                service_account_key_file=args.service_account_key_file,
-                                default_service_account=args.default_service_account,
-                                transport_security=transport_security,
-                            )
-                            jobs.append(test_job)
-    for server in args.override_server:
-        server_name = server[0]
-        (server_host, server_port) = server[1].split(":")
-        server_addresses[server_name] = (server_host, server_port)
-
-    for server_name, server_address in list(server_addresses.items()):
-        (server_host, server_port) = server_address
-        server_language = _LANGUAGES.get(server_name, None)
-        skip_server = []  # test cases unimplemented by server
-        if server_language:
-            skip_server = server_language.unimplemented_test_cases_server()
-        for language in languages:
-            for test_case in _TEST_CASES:
-                if not test_case in language.unimplemented_test_cases():
-                    if not test_case in skip_server:
-                        test_job = cloud_to_cloud_jobspec(
-                            language,
-                            test_case,
-                            server_name,
-                            server_host,
-                            server_port,
-                            docker_image=docker_images.get(str(language)),
-                            transport_security=args.transport_security,
-                            manual_cmd_log=client_manual_cmd_log,
-                        )
-                        jobs.append(test_job)
-
-        if args.http2_interop:
-            for test_case in _HTTP2_TEST_CASES:
-                if server_name == "go":
-                    # TODO(carl-mastrangelo): Reenable after https://github.com/grpc/grpc-go/issues/434
-                    continue
-                test_job = cloud_to_cloud_jobspec(
-                    http2Interop,
-                    test_case,
-                    server_name,
-                    server_host,
-                    server_port,
-                    docker_image=docker_images.get(str(http2Interop)),
-                    transport_security=args.transport_security,
-                    manual_cmd_log=client_manual_cmd_log,
-                )
-                jobs.append(test_job)
-
-    if args.http2_server_interop:
-        if not args.manual_run:
-            http2_server_job.wait_for_healthy(timeout_seconds=600)
-        for language in languages_http2_clients_for_http2_server_interop:
-            for test_case in set(_HTTP2_SERVER_TEST_CASES) - set(
-                _HTTP2_SERVER_TEST_CASES_THAT_USE_GRPC_CLIENTS
-            ):
-                offset = sorted(_HTTP2_SERVER_TEST_CASES).index(test_case)
-                server_port = _DEFAULT_SERVER_PORT + offset
-                if not args.manual_run:
-                    server_port = http2_server_job.mapped_port(server_port)
-                test_job = cloud_to_cloud_jobspec(
-                    language,
-                    test_case,
-                    str(http2InteropServer),
-                    "localhost",
-                    server_port,
-                    docker_image=docker_images.get(str(language)),
-                    manual_cmd_log=client_manual_cmd_log,
-                )
-                jobs.append(test_job)
-        for language in languages:
-            # HTTP2_SERVER_TEST_CASES_THAT_USE_GRPC_CLIENTS is a subset of
-            # HTTP_SERVER_TEST_CASES, in which clients use their gRPC interop clients rather
-            # than specialized http2 clients, reusing existing test implementations.
-            # For example, in the "data_frame_padding" test, use language's gRPC
-            # interop clients and make them think that they're running "large_unary"
-            # test case. This avoids implementing a new test case in each language.
-            for test_case in _HTTP2_SERVER_TEST_CASES_THAT_USE_GRPC_CLIENTS:
-                if test_case not in language.unimplemented_test_cases():
+        if args.http2_server_interop:
+            if not args.manual_run and not args.dry_run:
+                http2_server_job.wait_for_healthy(timeout_seconds=600)
+            http2_svc_host = (
+                server_service_name(http2InteropServer)
+                if active_network
+                else "localhost"
+            )
+            for language in languages_http2_clients_for_http2_server_interop:
+                for test_case in set(_HTTP2_SERVER_TEST_CASES) - set(
+                    _HTTP2_SERVER_TEST_CASES_THAT_USE_GRPC_CLIENTS
+                ):
                     offset = sorted(_HTTP2_SERVER_TEST_CASES).index(test_case)
                     server_port = _DEFAULT_SERVER_PORT + offset
-                    if not args.manual_run:
+                    if (
+                        not args.manual_run
+                        and not args.dry_run
+                        and not active_network
+                    ):
                         server_port = http2_server_job.mapped_port(server_port)
-                    if args.transport_security != "insecure":
-                        print(
-                            "Creating grpc client to http2 server test case "
-                            "with insecure connection, even though "
-                            "args.transport_security is not insecure. Http2 "
-                            "test server only supports insecure connections."
-                        )
                     test_job = cloud_to_cloud_jobspec(
                         language,
                         test_case,
                         str(http2InteropServer),
-                        "localhost",
+                        http2_svc_host,
                         server_port,
                         docker_image=docker_images.get(str(language)),
-                        transport_security="insecure",
                         manual_cmd_log=client_manual_cmd_log,
+                        docker_network=active_network,
                     )
                     jobs.append(test_job)
+            for language in languages:
+                for test_case in _HTTP2_SERVER_TEST_CASES_THAT_USE_GRPC_CLIENTS:
+                    if test_case not in language.unimplemented_test_cases():
+                        offset = sorted(_HTTP2_SERVER_TEST_CASES).index(
+                            test_case
+                        )
+                        server_port = _DEFAULT_SERVER_PORT + offset
+                        target_host = http2_svc_host
+                        client_net = active_network
+                        if str(language) == "objc":
+                            target_host = "localhost"
+                            client_net = None
+                            if not args.manual_run and not args.dry_run:
+                                server_port = http2_server_job.mapped_port(
+                                    server_port
+                                )
+                        elif (
+                            not args.manual_run
+                            and not args.dry_run
+                            and not active_network
+                        ):
+                            server_port = http2_server_job.mapped_port(
+                                server_port
+                            )
+                        if args.transport_security != "insecure":
+                            print(
+                                "Creating grpc client to http2 server test case "
+                                "with insecure connection, even though "
+                                "args.transport_security is not insecure. Http2 "
+                                "test server only supports insecure connections."
+                            )
+                        test_job = cloud_to_cloud_jobspec(
+                            language,
+                            test_case,
+                            str(http2InteropServer),
+                            target_host,
+                            server_port,
+                            docker_image=docker_images.get(str(language)),
+                            transport_security="insecure",
+                            manual_cmd_log=client_manual_cmd_log,
+                            docker_network=client_net,
+                        )
+                        jobs.append(test_job)
 
-    if not jobs:
-        print("No jobs to run.")
-        for image in six.itervalues(docker_images):
-            dockerjob.remove_image(image, skip_nonexistent=True)
-        sys.exit(1)
+        if args.emit_compose:
+            compose_yaml = generate_compose_yaml(
+                server_specs_by_lang=server_specs,
+                client_jobspecs=jobs,
+                docker_images=docker_images,
+                network_name=active_network or DEFAULT_COMPOSE_NETWORK,
+                http2_server_ports_count=len(_HTTP2_SERVER_TEST_CASES),
+            )
+            emit_compose_abs = os.path.abspath(args.emit_compose)
+            emit_compose_dir = os.path.dirname(emit_compose_abs)
+            if emit_compose_dir and not os.path.exists(emit_compose_dir):
+                os.makedirs(emit_compose_dir)
+            with open(emit_compose_abs, "w") as f:
+                f.write(compose_yaml)
+            print(
+                "Docker Compose manifest written to %s" % args.emit_compose
+            )
 
-    if args.manual_run:
-        print("All tests will skipped --manual_run option is active.")
+        if args.dry_run:
+            write_cmdlog_maybe(server_manual_cmd_log, "interop_server_cmds.sh")
+            write_cmdlog_maybe(client_manual_cmd_log, "interop_client_cmds.sh")
+            return 0
 
-    if args.verbose:
-        print("Jobs to run: \n%s\n" % "\n".join(str(job) for job in jobs))
+        if not jobs:
+            print("No jobs to run.")
+            for image in set(six.itervalues(docker_images)):
+                dockerjob.remove_image(image, skip_nonexistent=True)
+            sys.exit(1)
 
-    num_failures, resultset = jobset.run(
-        jobs,
-        newline_on_success=True,
-        maxjobs=args.jobs,
-        skip_jobs=args.manual_run,
-    )
-    if args.bq_result_table and resultset:
-        upload_interop_results_to_bq(resultset, args.bq_result_table)
-    if num_failures:
-        jobset.message("FAILED", "Some tests failed", do_newline=True)
-    else:
-        jobset.message("SUCCESS", "All tests passed", do_newline=True)
+        if args.manual_run:
+            print("All tests will skipped --manual_run option is active.")
 
-    write_cmdlog_maybe(server_manual_cmd_log, "interop_server_cmds.sh")
-    write_cmdlog_maybe(client_manual_cmd_log, "interop_client_cmds.sh")
+        if args.verbose:
+            print("Jobs to run: \n%s\n" % "\n".join(str(job) for job in jobs))
 
-    report_utils.render_junit_xml_report(resultset, _TESTS_XML_REPORT)
-
-    for name, job in list(resultset.items()):
-        if "http2" in name:
-            job[0].http2results = aggregate_http2_results(job[0].message)
-
-    http2_server_test_cases = (
-        _HTTP2_SERVER_TEST_CASES if args.http2_server_interop else []
-    )
-
-    if num_failures:
-        sys.exit(1)
-    else:
-        sys.exit(0)
-finally:
-    # Check if servers are still running.
-    for server, job in list(server_jobs.items()):
-        if not job.is_running():
-            print('Server "%s" has exited prematurely.' % server)
-
-    dockerjob.finish_jobs([j for j in six.itervalues(server_jobs)])
-
-    for image in six.itervalues(docker_images):
-        if not args.manual_run:
-            print("Removing docker image %s" % image)
-            dockerjob.remove_image(image)
+        num_failures, resultset = jobset.run(
+            jobs,
+            newline_on_success=True,
+            maxjobs=args.jobs,
+            skip_jobs=args.manual_run,
+        )
+        if args.bq_result_table and resultset:
+            upload_interop_results_to_bq(resultset, args.bq_result_table)
+        if num_failures:
+            jobset.message("FAILED", "Some tests failed", do_newline=True)
         else:
-            print("Preserving docker image: %s" % image)
+            jobset.message("SUCCESS", "All tests passed", do_newline=True)
+
+        write_cmdlog_maybe(server_manual_cmd_log, "interop_server_cmds.sh")
+        write_cmdlog_maybe(client_manual_cmd_log, "interop_client_cmds.sh")
+
+        report_utils.render_junit_xml_report(resultset, _TESTS_XML_REPORT)
+
+        for name, job in list(resultset.items()):
+            if "http2" in name:
+                job[0].http2results = aggregate_http2_results(job[0].message)
+
+        http2_server_test_cases = (
+            _HTTP2_SERVER_TEST_CASES if args.http2_server_interop else []
+        )
+
+        if num_failures:
+            sys.exit(1)
+        else:
+            sys.exit(0)
+    finally:
+        # Check if servers are still running.
+        for server, job in list(server_jobs.items()):
+            if not job.is_running():
+                print('Server "%s" has exited prematurely.' % server)
+
+        dockerjob.finish_jobs([j for j in six.itervalues(server_jobs)])
+        network_ctx.__exit__(None, None, None)
+
+        for image in sorted(set(six.itervalues(docker_images))):
+            if not args.manual_run and not args.dry_run:
+                print("Removing docker image %s" % image)
+                dockerjob.remove_image(image)
+            else:
+                print("Preserving docker image: %s" % image)
+
+
+if __name__ == "__main__":
+    main()

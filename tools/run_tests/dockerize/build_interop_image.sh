@@ -83,6 +83,35 @@ BASE_IMAGE_DIR="tools/dockerfile/interoptest/$BASE_NAME"
 # The exact base docker image to use and its version is determined by the corresponding .current_version file
 BASE_IMAGE="$(cat "${BASE_IMAGE_DIR}.current_version")"
 
+# Prefer declarative `docker buildx bake` when available, falling back to
+# legacy mutable container + `docker commit` when buildx is unavailable.
+if [[ "${GRPC_INTEROP_DISABLE_BAKE:-0}" != "1" ]] && \
+   [[ -z "${BUILD_INTEROP_DOCKER_EXTRA_ARGS:-}" ]] && \
+   [[ -f "tools/interop_bake/docker-bake.hcl" ]] && \
+   docker buildx bake --help >/dev/null 2>&1; then
+  SAFENAME="${BASE_NAME#grpc_interop_}"
+  BAKE_TARGET="${SAFENAME//./_}"
+  BAKE_EMPTY_DIR="$(mktemp -d)"
+  trap 'rm -rf "$BAKE_EMPTY_DIR"' EXIT
+  if GRPC_ROOT="${GRPC_ROOT}" \
+     GRPC_JAVA_ROOT="${GRPC_JAVA_ROOT:-$BAKE_EMPTY_DIR}" \
+     GRPC_GO_ROOT="${GRPC_GO_ROOT:-$BAKE_EMPTY_DIR}" \
+     GRPC_DART_ROOT="${GRPC_DART_ROOT:-$BAKE_EMPTY_DIR}" \
+     GRPC_NODE_ROOT="${GRPC_NODE_ROOT:-$BAKE_EMPTY_DIR}" \
+     GRPC_DOTNET_ROOT="${GRPC_DOTNET_ROOT:-$BAKE_EMPTY_DIR}" \
+     SERVICE_ACCOUNT_DIR="${HOME}/service_account" \
+     docker buildx bake \
+       -f "tools/interop_bake/docker-bake.hcl" \
+       --set "${BAKE_TARGET}.tags=${INTEROP_IMAGE}" \
+       --set "${BAKE_TARGET}.args.BASE_IMAGE=${BASE_IMAGE}" \
+       --load \
+       "${BAKE_TARGET}"; then
+    echo "Successfully built image $INTEROP_IMAGE via docker buildx bake"
+    exit 0
+  fi
+  echo "WARNING: docker buildx bake failed; falling back to legacy docker build."
+fi
+
 # If TTY is available, the running container can be conveniently terminated with Ctrl+C.
 if [[ -t 0 ]]; then
   DOCKER_TTY_ARGS=("-it")
