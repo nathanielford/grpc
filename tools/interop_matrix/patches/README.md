@@ -31,8 +31,8 @@ git checkout <current working branch>
 cp ~/git_repo.patch tools/interop_matrix/patches/<language>_<git_tag>/
 ```
 
-5. Edit the `LANGUAGE_RELEASE_MATRIX` in `client_matrix.py` for your language/tag
-and add a `'patch': [<files>,....]` entry to it's `dictionary`.
+5. In `tools/interop/config.json`, add a `"patch": [<files>, ...]` entry for
+your language/tag under `matrix.languages.<lang>.release_overrides`.
 
 After doing this, the interop image creation script can apply that patch to the
 tag with `git apply` before uploading to the test image repo.

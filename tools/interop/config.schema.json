@@ -1,0 +1,896 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://grpc.io/schemas/interop-config.schema.json",
+  "title": "gRPC Interoperability & Release Matrix Configuration",
+  "description": "Single source of truth for gRPC cross-language interoperability tests and backward-compatibility release matrix tests (tools/interop/runner.py). This file drives two workflows: (1) Live HEAD testing ('tools/interop/runner.py test'), where clients and servers built from the current checkout are paired against each other (cloud_to_cloud), against live Google production endpoints (cloud_to_prod / cloud_to_prod_auth), or against HTTP/2 negative test peers; and (2) Historical Release Matrix testing ('tools/interop/runner.py matrix-test' and 'matrix-build'), where pre-built Docker images from past gRPC releases (v1.0.x through current) are pulled from Artifact Registry and tested against live servers to verify wire compatibility. HOW TO ADD A LANGUAGE: Add an entry under 'languages' with 'repo', 'client_cmd' (and optional 'server_cmd'/'http2_client_cmd'), working directory ('cwd' or 'client_cwd'/'server_cwd'), and explicit 'client_capabilities' and 'server_capabilities' lists. HOW TO ADD A TEST CASE: Add an entry under 'test_cases.<suite>' with 'capabilities' (shared by client and server) or 'client_capabilities'/'server_capabilities' (when asymmetric). HOW TO ADD A MATRIX RELEASE: Append the new git tag to 'matrix.languages.<lang>.releases'; only add a 'release_overrides' entry if that release requires non-default runtimes, git patches, or a different custom entrypoint. SYNC RULE: tools/interop/config.schema.json and tools/interop/config.json MUST be kept strictly in sync at all times (enforced by tools/interop/runner.py and tools/interop/test_interop.py).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "capabilities",
+    "prod_servers",
+    "prod_server_capabilities",
+    "settings",
+    "test_cases",
+    "language_defaults",
+    "languages",
+    "matrix"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Relative path to this JSON Schema file so IDEs (VS Code, IntelliJ) provide inline validation and hover documentation while editing config.json. Do not modify unless moving the schema file."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "3.0",
+      "description": "Format version of config.json checked by tools/interop/runner.py on startup. Bump only when making breaking structural changes to this schema."
+    },
+    "capabilities": {
+      "type": "array",
+      "description": "Master vocabulary of feature, credential, and transport capability tokens. The runner pairs a client and a server for a test case if and only if both endpoints possess all capabilities required by that test case and transport mode. Add a token here (and in runner.py's Capability enum) only when introducing a new feature gate that only a subset of languages implement.",
+      "items": {
+        "$ref": "#/$defs/capability"
+      },
+      "minItems": 22,
+      "uniqueItems": true
+    },
+    "prod_servers": {
+      "type": "object",
+      "description": "Named Google production interop server endpoints selectable via --prod_servers in cloud_to_prod and cloud_to_prod_auth test runs. Modify only when Google adds, migrates, or retires a hosted interop sandbox endpoint.",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-zA-Z0-9_]+$": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Fully-qualified DNS hostname of the hosted production interop server (tested on port 443)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "prod_server_capabilities": {
+      "$ref": "#/$defs/capability_list",
+      "minItems": 1,
+      "description": "Capabilities supported by the hosted servers in prod_servers. Because production sandbox servers do not enable experimental features like compression, ORCA, or custom status messages, omitting those capabilities here prevents cloud_to_prod runs from scheduling unsupported tests against production. Update only when production sandbox server capabilities change."
+    },
+    "settings": {
+      "$ref": "#/$defs/runner_settings",
+      "description": "Operational settings for live HEAD interop test runs (timeouts, retry counts, default ports, default auth credentials, and BuildKit named build contexts). Edit when tuning test timeouts/retries or onboarding a new sibling language repository for Docker builds."
+    },
+    "test_cases": {
+      "$ref": "#/$defs/test_cases",
+      "description": "Registry of all interop test cases across the test suites (standard, auth, http2_client, http2_server, dedicated_server) and the capabilities required to run each one. Edit this section when adding a new interop test case or changing which capability gates an existing test."
+    },
+    "language_defaults": {
+      "$ref": "#/$defs/language_defaults",
+      "description": "Default runner flags inherited by every entry in 'languages' (whether the language is included in '-l all', builds in Docker, or is the HTTP/2 harness target). Edit only when changing these default flags across all languages."
+    },
+    "languages": {
+      "type": "object",
+      "description": "Per-language client and server definitions for live HEAD testing (tools/interop/runner.py). Each key is the CLI name passed to -l/--language or -s/--server. Add or edit an entry here when onboarding a new language, changing how a language binary is invoked, or enabling newly implemented test capabilities for a language.",
+      "minProperties": 1,
+      "patternProperties": {
+        "^[a-z0-9+]+$": {
+          "$ref": "#/$defs/language_entry"
+        }
+      },
+      "additionalProperties": false
+    },
+    "matrix": {
+      "$ref": "#/$defs/matrix",
+      "description": "Configuration for the backward-compatibility release matrix (tools/interop_matrix/), which tests pre-built Docker images of past gRPC releases against live production servers. Edit when adding a new release tag to the compatibility matrix."
+    }
+  },
+  "$defs": {
+    "capability": {
+      "type": "string",
+      "description": "Capability token gating test eligibility or CLI flag generation: CORE_INTEROP (8 baseline unary/streaming/cancellation RPCs), ADVANCED_INTEROP (metadata, status codes, unimplemented method/service), TIMEOUT_ON_SLEEPING_SERVER (deadline expiry RPC), CLIENT/SERVER_COMPRESSION_UNARY/STREAMING (payload compression), SPECIAL_STATUS_MESSAGE (UTF-8/whitespace status details), DATA_FRAME_PADDING (HTTP/2 frame padding tolerance), ORCA (per-RPC and out-of-band load reporting), SINGLE_INVOCATION_SUITE (client binary runs all test cases in a single invocation, e.g. Objective-C XCTest), AUTH_CREDS (cloud_to_prod auth suite), AUTH_KEY_FILE_ENV (client reads service account key path from GOOGLE_APPLICATION_CREDENTIALS env var instead of --service_account_key_file flag), GOOGLE_DEFAULT_CREDS / GCE_CHANNEL_CREDS / GCE_OAUTH2 (GCP credential modes), HTTP2_INTEROP / HTTP2_SERVER_INTEROP / HTTP2_BADSERVER_CLIENT (HTTP/2 negative and framing suites), TLS / INSECURE / ALTS (transport security modes), and MAX_CONCURRENT_STREAMS_CONNECTION_SCALING (client opens additional connections when a server's MAX_CONCURRENT_STREAMS limit is reached).",
+      "enum": [
+        "CORE_INTEROP",
+        "ADVANCED_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SERVER_COMPRESSION_UNARY",
+        "SERVER_COMPRESSION_STREAMING",
+        "SPECIAL_STATUS_MESSAGE",
+        "DATA_FRAME_PADDING",
+        "ORCA",
+        "SINGLE_INVOCATION_SUITE",
+        "AUTH_CREDS",
+        "AUTH_KEY_FILE_ENV",
+        "GOOGLE_DEFAULT_CREDS",
+        "GCE_CHANNEL_CREDS",
+        "GCE_OAUTH2",
+        "HTTP2_INTEROP",
+        "HTTP2_SERVER_INTEROP",
+        "HTTP2_BADSERVER_CLIENT",
+        "TLS",
+        "INSECURE",
+        "ALTS",
+        "MAX_CONCURRENT_STREAMS_CONNECTION_SCALING"
+      ]
+    },
+    "capability_list": {
+      "type": "array",
+      "description": "Set of unique capability tokens. Order does not matter.",
+      "items": {
+        "$ref": "#/$defs/capability"
+      },
+      "uniqueItems": true
+    },
+    "transport_security_mode": {
+      "type": "string",
+      "description": "Custom channel credential mechanism passed via --custom_credentials_type in cloud_to_prod_auth test cases. Maps to the corresponding capability (GOOGLE_DEFAULT_CREDS or GCE_CHANNEL_CREDS) and injects --custom_credentials_type=<mode> instead of --use_tls=true.",
+      "enum": [
+        "google_default_credentials",
+        "compute_engine_channel_creds"
+      ]
+    },
+    "env_map": {
+      "type": "object",
+      "description": "Environment variables injected into the test process (or passed via 'docker run -e KEY=VALUE' when running in Docker).",
+      "patternProperties": {
+        "^[A-Za-z_][A-Za-z0-9_]*$": {
+          "type": "string",
+          "description": "Value assigned to the environment variable."
+        }
+      },
+      "additionalProperties": false
+    },
+    "command_object": {
+      "type": "object",
+      "description": "Structured command specification used only when a language's test runner cannot accept standard gRPC interop flags appended directly as separate argv tokens (for example, Python's setup.py wrapper or Objective-C's xcodebuild invocation). Most languages should use a simple array of strings instead of this object.",
+      "additionalProperties": false,
+      "required": [
+        "args_mode"
+      ],
+      "properties": {
+        "command": {
+          "type": "array",
+          "description": "Base executable and fixed arguments before any dynamic interop flags are added. Omitted only in 'extract_port_template' mode where 'arg_template' contains the entire shell command.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "args_mode": {
+          "type": "string",
+          "description": "How runtime interop flags (--server_host, --server_port, --test_case, etc.) are passed to the command: 'joined_flag' bundles all interop flags into a single '--args=\"...\"' token (required by Python's setup.py run_interop command); 'ignore_args' drops all runtime flags (required by the standalone HTTP/2 bad-server python script which takes no CLI flags); 'extract_port_template' extracts the port number from --server_port and formats 'arg_template' (required by Objective-C's xcodebuild command).",
+          "enum": [
+            "joined_flag",
+            "ignore_args",
+            "extract_port_template"
+          ]
+        },
+        "arg_template": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Python .format() template string used by 'joined_flag' (receives {args}, defaulting to '--args=\"{args}\"') or 'extract_port_template' (receives {port} extracted from --server_port). Omit for 'ignore_args' or when 'joined_flag' uses the default '--args=\"{args}\"' format."
+        }
+      }
+    },
+    "command_spec": {
+      "description": "How to invoke a language's client or server binary. Use a simple argv array (e.g. [\"dart\", \"bin/client.dart\"]) whenever the binary accepts standard gRPC flags (--server_host, --server_port, --test_case) directly; use a command_object only if the wrapper script requires special flag formatting.",
+      "oneOf": [
+        {
+          "type": "array",
+          "description": "Executable and fixed arguments where standard gRPC interop flags are appended directly as argv tokens.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        {
+          "$ref": "#/$defs/command_object"
+        }
+      ]
+    },
+    "test_cases": {
+      "type": "object",
+      "description": "Catalog of all interop test cases divided into suites based on how the runner schedules them: 'standard' (client-to-server RPC tests), 'auth' (cloud-to-prod credential tests), 'http2_client' (dedicated HTTP/2 test client against gRPC servers), 'http2_server' (gRPC/HTTP2 clients against the dedicated negative HTTP/2 server), and the optional 'dedicated_server' (clients against their own server instance started with extra flags). Add new test cases to the appropriate suite here.",
+      "additionalProperties": false,
+      "required": [
+        "standard",
+        "auth",
+        "http2_client",
+        "http2_server"
+      ],
+      "properties": {
+        "standard": {
+          "type": "object",
+          "description": "Standard gRPC functional test cases (unary, streaming, cancellation, compression, metadata, status codes, ORCA). Run in both cloud_to_cloud (every client language vs every server language) and cloud_to_prod (every client language vs prod_servers). Each key is the exact '--test_case=<name>' value passed to client binaries.",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z0-9_]+$": {
+              "$ref": "#/$defs/standard_test_case"
+            }
+          },
+          "additionalProperties": false
+        },
+        "auth": {
+          "type": "object",
+          "description": "Authentication and credential test cases run when --cloud_to_prod_auth is enabled. These test real Google Cloud / OAuth2 / JWT credentials against production sandbox servers. Each key is the '--test_case=<name>' value passed to the client.",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z0-9_]+$": {
+              "$ref": "#/$defs/auth_test_case"
+            }
+          },
+          "additionalProperties": false
+        },
+        "http2_client": {
+          "type": "object",
+          "description": "HTTP/2 protocol edge-case test cases run when --http2_interop is enabled. Driven by the dedicated Go-based HTTP/2 test client ('languages.http2.client_cmd') against each language's gRPC server.",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z0-9_]+$": {
+              "$ref": "#/$defs/http2_client_test_case"
+            }
+          },
+          "additionalProperties": false
+        },
+        "http2_server": {
+          "type": "object",
+          "description": "Negative HTTP/2 server test cases (RST_STREAM, GOAWAY, PING, max_streams, data frame padding) run when --http2_server_interop is enabled. The runner starts the dedicated Python bad-HTTP/2 server ('languages.http2.server_cmd'), which listens on a separate port per test case (8080 + alphabetical index), and runs capable language clients against each port.",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z0-9_]+$": {
+              "$ref": "#/$defs/http2_server_test_case"
+            }
+          },
+          "additionalProperties": false
+        },
+        "dedicated_server": {
+          "type": "object",
+          "description": "Test cases that need their own server instance started with extra flags, run as part of cloud_to_cloud whenever the named 'server' language is among the requested servers. The runner starts one extra server container per test case, waits 'server_startup_seconds', and runs every requested client language holding 'client_capabilities' against it. The extra server is reported as '<server_name>_server' in test shortnames.",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z0-9_]+$": {
+              "$ref": "#/$defs/dedicated_server_test_case"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "standard_test_case": {
+      "type": "object",
+      "description": "Requirements and optional extra flags for a standard gRPC interop test case.",
+      "additionalProperties": false,
+      "required": [
+        "capabilities"
+      ],
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/capability_list",
+          "minItems": 1,
+          "description": "Capabilities that BOTH the client and the server must possess for the runner to schedule this test case between them."
+        },
+        "extra_cloud_to_cloud_flags": {
+          "type": "array",
+          "description": "Additional CLI flags appended to the client command only during cloud_to_cloud runs (for example, injecting a test load-balancing service_config_json for ORCA tests). Omit unless the test case requires special client flags beyond --test_case, --server_host, and --server_port.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "auth_test_case": {
+      "type": "object",
+      "description": "Requirements and credential flag/environment rules for a cloud_to_prod_auth test case. Exists because different auth tests require different combinations of --oauth_scope, --default_service_account, --service_account_key_file, or GCE metadata server access.",
+      "additionalProperties": false,
+      "required": [
+        "capabilities"
+      ],
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/capability_list",
+          "minItems": 1,
+          "description": "Capabilities required by both the client and the target production server to run this auth test."
+        },
+        "transport_security": {
+          "$ref": "#/$defs/transport_security_mode",
+          "description": "Credential transport mode required by this test case (defaults to 'tls' when omitted). Set to 'google_default_credentials' or 'compute_engine_channel_creds' when the test case exercises those specific custom credential types."
+        },
+        "requires_compute_engine_creds": {
+          "type": "boolean",
+          "description": "If true, this test case talks to the GCE metadata server for every language and is skipped whenever --skip_compute_engine_creds is passed on the CLI (e.g. when running outside GCE)."
+        },
+        "uses_service_account_key": {
+          "type": "boolean",
+          "description": "If true, the runner provides the service account key file to the client: either via the GOOGLE_APPLICATION_CREDENTIALS environment variable (for languages with AUTH_KEY_FILE_ENV) or via the --service_account_key_file CLI flag (all other languages)."
+        },
+        "uses_service_account_key_when_flag": {
+          "type": "string",
+          "enum": [
+            "google_default_creds_use_key_file"
+          ],
+          "description": "When set to 'google_default_creds_use_key_file', sets GOOGLE_APPLICATION_CREDENTIALS to the service account key file only if --google_default_creds_use_key_file was passed on the runner CLI."
+        },
+        "uses_oauth_scope": {
+          "type": "boolean",
+          "description": "If true, appends '--oauth_scope=https://www.googleapis.com/auth/xapi.zoo' to the client command."
+        },
+        "uses_default_service_account": {
+          "type": "boolean",
+          "description": "If true, appends '--default_service_account=<email>' to the client command for all languages."
+        },
+        "requires_compute_engine_creds_capability": {
+          "$ref": "#/$defs/capability",
+          "description": "When set (e.g. GCE_OAUTH2 on oauth2_auth_token), languages possessing this capability use the GCE metadata server for this test case and will skip it when --skip_compute_engine_creds is active, whereas languages without this capability use a local key file and can still run."
+        },
+        "uses_default_service_account_capability": {
+          "$ref": "#/$defs/capability",
+          "description": "When set (e.g. GCE_OAUTH2 on oauth2_auth_token), appends '--default_service_account=<email>' only for client languages possessing this capability."
+        }
+      }
+    },
+    "http2_client_test_case": {
+      "type": "object",
+      "description": "Definition of an HTTP/2 client test case run by the dedicated HTTP/2 test client against gRPC language servers.",
+      "additionalProperties": false,
+      "required": [
+        "capabilities"
+      ],
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/capability_list",
+          "minItems": 1,
+          "description": "Capabilities required by both the HTTP/2 test client and the target gRPC server (typically HTTP2_INTEROP)."
+        }
+      }
+    },
+    "http2_server_test_case": {
+      "type": "object",
+      "description": "Definition of a negative HTTP/2 server test case. Unlike standard test cases where client and server share the same capability requirement, these tests pair the dedicated bad-HTTP/2 server (which has HTTP2_SERVER_INTEROP) with either a language's dedicated negative HTTP/2 client binary ('http2_client_cmd') or its standard gRPC client binary ('client_cmd').",
+      "additionalProperties": false,
+      "required": [
+        "client_capabilities",
+        "server_capabilities"
+      ],
+      "properties": {
+        "client_capabilities": {
+          "$ref": "#/$defs/capability_list",
+          "minItems": 1,
+          "description": "Capabilities required on the client language (e.g. HTTP2_BADSERVER_CLIENT for tests using http2_client_cmd, or DATA_FRAME_PADDING / CORE_INTEROP for tests driven by the standard gRPC client)."
+        },
+        "server_capabilities": {
+          "$ref": "#/$defs/capability_list",
+          "minItems": 1,
+          "description": "Capabilities required on the target HTTP/2 test server (HTTP2_SERVER_INTEROP)."
+        },
+        "grpc_client_test_case": {
+          "type": "string",
+          "minLength": 1,
+          "description": "When set (e.g. 'large_unary' for data_frame_padding and no_df_padding_sanity_test), the runner invokes the language's standard gRPC client ('client_cmd') over an insecure connection with '--test_case=<grpc_client_test_case>' instead of invoking 'http2_client_cmd'. Omit for tests that use 'http2_client_cmd'."
+        }
+      }
+    },
+    "dedicated_server_test_case": {
+      "type": "object",
+      "description": "Definition of a test case that runs against a dedicated, specially configured instance of one language's interop server.",
+      "additionalProperties": false,
+      "required": [
+        "client_capabilities",
+        "server",
+        "server_name",
+        "server_flags"
+      ],
+      "properties": {
+        "client_capabilities": {
+          "$ref": "#/$defs/capability_list",
+          "minItems": 1,
+          "description": "Capabilities a client language must hold to run this test case."
+        },
+        "server": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Key in 'languages' whose interop server is started for this test case. The test case only runs when this language is among the requested servers (-s)."
+        },
+        "server_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Server name used in test shortnames (cloud_to_cloud:<client>:<server_name>_server:<test_case>:<transport>)."
+        },
+        "server_flags": {
+          "type": "array",
+          "description": "Flags appended to the server command after --port and the transport security flags.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "server_startup_seconds": {
+          "type": "integer",
+          "description": "Seconds to wait after starting the server before scheduling clients (default 0)."
+        },
+        "extra_cloud_to_cloud_flags": {
+          "type": "array",
+          "description": "Additional CLI flags appended to the client command (same semantics as for standard test cases).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "language_defaults": {
+      "type": "object",
+      "description": "Default runner flags applied to every entry in 'languages' before per-language fields are layered on top. Keeps individual language entries from repeating boolean harness flags.",
+      "additionalProperties": false,
+      "required": [
+        "included_in_all_clients",
+        "docker_supported",
+        "is_http2_target"
+      ],
+      "properties": {
+        "included_in_all_clients": {
+          "type": "boolean",
+          "description": "Default for whether a language is included when '-l all' is passed on the CLI (true)."
+        },
+        "docker_supported": {
+          "type": "boolean",
+          "description": "Default for whether a language builds and runs inside a Linux Docker image when --use_docker is passed (true)."
+        },
+        "is_http2_target": {
+          "type": "boolean",
+          "description": "Default for whether an entry is the synthetic HTTP/2 harness endpoint rather than a user-selectable language (false)."
+        }
+      }
+    },
+    "language_entry": {
+      "type": "object",
+      "description": "Configuration for a single language (or client variant such as 'javaokhttp' or 'nodepurejs') in tools/interop/runner.py. Inherits boolean flags from 'language_defaults' and explicitly declares its source repository, commands, working directories, environment variables, and supported client/server capabilities.",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "client_cmd",
+        "client_capabilities",
+        "server_capabilities"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^https://github\\.com/[^/]+/[^/]+\\.git$",
+          "description": "Authoritative Git repository URL hosting this language's gRPC implementation (e.g. 'https://github.com/grpc/grpc.git' or 'https://github.com/grpc/grpc-go.git'). Serves as the source of truth for where each language's library code lives and is cloned by 'runner.py matrix-build --git_checkout' when building release Docker images."
+        },
+        "safename": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Alphanumeric name used to locate 'tools/dockerfile/interoptest/grpc_interop_<safename>' and name Docker containers. Defaults to the language's key name when omitted. Set this only when the language key contains punctuation ('c++' -> 'cxx') or when two client variants share the same Docker image ('javaokhttp' -> 'java')."
+        },
+        "included_in_all_clients": {
+          "type": "boolean",
+          "description": "Set to false only for languages that cannot run in standard Linux '-l all' CI runs (such as 'objc', which requires macOS/Xcode) so they run only when explicitly requested via '-l <lang>'."
+        },
+        "docker_supported": {
+          "type": "boolean",
+          "description": "Set to false only for macOS-only languages ('objc') that have no Linux Dockerfile and must always execute directly on the host."
+        },
+        "is_http2_target": {
+          "type": "boolean",
+          "description": "Set to true only on the special 'http2' entry, which provides the dedicated HTTP/2 test client (--http2_interop) and negative HTTP/2 test server (--http2_server_interop) rather than a general gRPC language."
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Working directory (relative to /var/local/git/grpc inside Docker, or repo root locally) shared by client, server, and http2_client commands. Use this shorthand instead of repeating 'client_cwd', 'server_cwd', and 'http2_cwd' when all commands run from the same directory; omit if commands run from the gRPC repo root."
+        },
+        "client_cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Working directory for 'client_cmd' when different from 'server_cwd' (or for client-only languages). Defaults to 'cwd' (or the gRPC repo root if neither is set)."
+        },
+        "server_cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Working directory for 'server_cmd' when different from 'client_cwd'. Defaults to 'cwd' (or the gRPC repo root if neither is set)."
+        },
+        "http2_cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Working directory for 'http2_client_cmd' when different from 'cwd' (e.g. Go's negative HTTP/2 client lives in a separate package directory). Defaults to 'cwd' when omitted."
+        },
+        "global_env": {
+          "$ref": "#/$defs/env_map",
+          "description": "Environment variables required by this language's runtime (e.g. PYTHONPATH/LD_LIBRARY_PATH for Python or GO111MODULE for Go), applied to both client and server invocations."
+        },
+        "client_cmd": {
+          "$ref": "#/$defs/command_spec",
+          "description": "Command used to launch the language's interop client when --contract-entrypoints is not set."
+        },
+        "server_cmd": {
+          "$ref": "#/$defs/command_spec",
+          "description": "Command used to launch the language's interop server when --contract-entrypoints is not set. Omit for client-only variants (such as 'javaokhttp', 'nodepurejs', or 'objc')."
+        },
+        "http2_client_cmd": {
+          "$ref": "#/$defs/command_spec",
+          "description": "Command used to launch the language's negative HTTP/2 test client for --http2_server_interop tests (rst_after_header, goaway, ping, max_streams). Omit unless the language has HTTP2_BADSERVER_CLIENT."
+        },
+        "client_capabilities": {
+          "$ref": "#/$defs/capability_list",
+          "minItems": 1,
+          "description": "Complete list of capabilities supported by this language's interop client. Edit this list when enabling or disabling a test suite, feature, transport security mode, or credential passing mode for this language's client."
+        },
+        "server_capabilities": {
+          "$ref": "#/$defs/capability_list",
+          "description": "Complete list of capabilities supported by this language's interop server. Set to [] for client-only entries ('javaokhttp', 'nodepurejs', 'objc') or servers that currently have all server test cases disabled ('pythonasyncio'). Edit this list when enabling or disabling a feature or transport security mode for this language's server."
+        }
+      }
+    },
+    "matrix": {
+      "type": "object",
+      "description": "Configuration for the backward-compatibility release matrix ('tools/interop/runner.py matrix-build' and 'matrix-test'). Unlike live HEAD tests, matrix tests pull pre-built Docker images of historical gRPC releases (e.g. grpc_interop_cxx:v1.0.1 through v1.76.0) from Artifact Registry and run them against live production servers to ensure old clients still interoperate with current infrastructure.",
+      "additionalProperties": false,
+      "required": [
+        "docker_path",
+        "git_checkout_root",
+        "max_parallel_downloads",
+        "flake_retries",
+        "pull_image_retries",
+        "timeouts",
+        "servers",
+        "test_cases",
+        "languages",
+        "custom_entrypoints"
+      ],
+      "properties": {
+        "docker_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Default Artifact Registry / Container Registry repository prefix where historical release Docker images are pushed and pulled (overridable on the CLI via --docker_path / --gcr_path)."
+        },
+        "git_checkout_root": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Default scratch directory on disk where 'runner.py matrix-build --git_checkout' clones historical language repositories (overridable via --git_checkout_root)."
+        },
+        "max_parallel_downloads": {
+          "type": "integer",
+          "description": "Maximum number of release Docker images pulled concurrently per chunk during 'runner.py matrix-test' to avoid exhausting disk space or registry bandwidth."
+        },
+        "flake_retries": {
+          "type": "integer",
+          "description": "Number of retry attempts per matrix test job when --allow_flakes is enabled."
+        },
+        "pull_image_retries": {
+          "type": "integer",
+          "description": "Number of retry attempts when pulling a release Docker image from Artifact Registry fails transiently."
+        },
+        "timeouts": {
+          "$ref": "#/$defs/matrix_timeouts",
+          "description": "Per-operation timeouts in seconds for backward-compatibility matrix runs (test execution, image pull, and image build)."
+        },
+        "servers": {
+          "type": "array",
+          "description": "Production sandbox server hostnames that every historical release image is tested against (each release runs all matrix.test_cases against each server here).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "test_cases": {
+          "type": "array",
+          "description": "Subset of standard interop test cases executed for every historical release in the backward-compatibility matrix (the 9 core/timeout test cases supported by all releases since v1.0).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "languages": {
+          "type": "object",
+          "description": "Per-language release catalog for the backward-compatibility matrix. When releasing a new gRPC version, append the new git tag to 'matrix.languages.<lang>.releases'.",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z0-9_]+$": {
+              "$ref": "#/$defs/matrix_language"
+            }
+          },
+          "additionalProperties": false
+        },
+        "custom_entrypoints": {
+          "type": "object",
+          "description": "Named client invocation templates ('<lang>__<version>') telling 'runner.py matrix-test' how to launch the interop client inside pre-built historical Docker images. Why this exists: old release images are frozen in Artifact Registry with whatever build system, binary path, and runtime version existed at the time (e.g., C++ used Make 'bins/opt/interop_client' before v1.32 and CMake 'cmake/build/interop_client' after; Python used py27, then py37, then py39, then py310). Each release uses '<lang>__master' by default unless an entry in 'matrix.languages.<lang>.release_overrides' points to another entrypoint here; '<lang>__master' may be omitted when every release of that language has an override. You only need to add a new entrypoint here if a future gRPC release changes the path or flags of its client binary inside the Docker image.",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z0-9_]+__[a-z0-9._]+$": {
+              "$ref": "#/$defs/matrix_custom_entrypoint"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "runner_settings": {
+      "type": "object",
+      "description": "Global operational settings for live HEAD interop runs ('runner.py test') and Docker image builds.",
+      "additionalProperties": false,
+      "required": [
+        "docker_workdir_root",
+        "default_server_port",
+        "default_service_account_key_file",
+        "default_service_account",
+        "oauth_scope",
+        "cloud_to_cloud_client_flags",
+        "timeouts",
+        "retries"
+      ],
+      "properties": {
+        "docker_workdir_root": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Base working directory inside interop Docker containers ('/var/local/git/grpc') from which per-language relative 'cwd'/'client_cwd'/'server_cwd' paths are resolved."
+        },
+        "default_server_port": {
+          "type": "integer",
+          "description": "Base TCP port inside server containers (8080) exposed to the host during cloud_to_cloud and http2_server_interop runs."
+        },
+        "default_service_account_key_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Default path inside the container to the service account JSON key file used by cloud_to_prod_auth tests when --service_account_key_file is not specified."
+        },
+        "default_service_account": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Default GCE service account email passed via --default_service_account in cloud_to_prod_auth tests when not overridden on the CLI."
+        },
+        "oauth_scope": {
+          "type": "string",
+          "minLength": 1,
+          "description": "OAuth2 scope URL passed via --oauth_scope to auth test cases that set 'uses_oauth_scope: true'."
+        },
+        "cloud_to_cloud_client_flags": {
+          "type": "array",
+          "description": "Baseline flags appended to every cloud_to_cloud client invocation so clients trust the gRPC test CA certificate and match its test hostname ('foo.test.google.fr').",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "timeouts": {
+          "$ref": "#/$defs/runner_timeouts",
+          "description": "Timeouts in seconds for live HEAD interop test jobs, server containers, Docker builds, and HTTP/2 server health checks."
+        },
+        "retries": {
+          "$ref": "#/$defs/runner_retries",
+          "description": "Retry counts applied to live HEAD test jobs when --allow_flakes is enabled."
+        },
+        "build_contexts": {
+          "type": "object",
+          "description": "Named BuildKit build contexts ('--build-context <name>=<path>') passed to 'docker buildx build' when building interop Docker images. Maps each Dockerfile context name (e.g. 'grpc', 'grpc_go', 'grpc_java') to its override environment variable and default path relative to the gRPC repo root.",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z0-9_]+$": {
+              "$ref": "#/$defs/build_context_spec"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "runner_timeouts": {
+      "type": "object",
+      "description": "Timeout durations in seconds for live HEAD interop operations.",
+      "additionalProperties": false,
+      "required": [
+        "test_seconds",
+        "server_seconds",
+        "docker_build_seconds",
+        "http2_server_healthcheck_seconds"
+      ],
+      "properties": {
+        "test_seconds": {
+          "type": "integer",
+          "description": "Maximum execution time in seconds for a single cloud_to_cloud or cloud_to_prod client test case job."
+        },
+        "server_seconds": {
+          "type": "integer",
+          "description": "Maximum lifetime in seconds for a background interop server container during a test run."
+        },
+        "docker_build_seconds": {
+          "type": "integer",
+          "description": "Maximum time in seconds allowed to build a language's interop Docker image."
+        },
+        "http2_server_healthcheck_seconds": {
+          "type": "integer",
+          "description": "Maximum time in seconds to wait for the negative HTTP/2 test server container to report healthy before launching client tests."
+        }
+      }
+    },
+    "runner_retries": {
+      "type": "object",
+      "description": "Retry counts used by 'runner.py test' when --allow_flakes is enabled.",
+      "additionalProperties": false,
+      "required": [
+        "flake_retries",
+        "timeout_retries"
+      ],
+      "properties": {
+        "flake_retries": {
+          "type": "integer",
+          "description": "Number of times to re-run a non-zero failing test job when --allow_flakes is enabled."
+        },
+        "timeout_retries": {
+          "type": "integer",
+          "description": "Number of times to re-run a timed-out test job when --allow_flakes is enabled."
+        }
+      }
+    },
+    "build_context_spec": {
+      "type": "object",
+      "description": "Resolution rule for a named BuildKit '--build-context' directory used by multi-stage interop Dockerfiles.",
+      "additionalProperties": false,
+      "required": [
+        "env_var",
+        "default_rel_path"
+      ],
+      "properties": {
+        "env_var": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Environment variable name (e.g. GRPC_GO_ROOT) that, when set, overrides the local directory path for this build context."
+        },
+        "default_rel_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Default directory path (relative to the gRPC repo root) used for this build context when 'env_var' is not set (falling back to an empty directory if the sibling repo is not checked out locally)."
+        }
+      }
+    },
+    "matrix_timeouts": {
+      "type": "object",
+      "description": "Timeout durations in seconds for backward-compatibility release matrix operations.",
+      "additionalProperties": false,
+      "required": [
+        "test_seconds",
+        "pull_image_seconds",
+        "build_image_seconds"
+      ],
+      "properties": {
+        "test_seconds": {
+          "type": "integer",
+          "description": "Maximum execution time in seconds for a single matrix client test case job."
+        },
+        "pull_image_seconds": {
+          "type": "integer",
+          "description": "Maximum time in seconds allowed to pull and smoke-test a release Docker image from Artifact Registry."
+        },
+        "build_image_seconds": {
+          "type": "integer",
+          "description": "Maximum time in seconds allowed to build a single release Docker image in 'runner.py matrix-build'."
+        }
+      }
+    },
+    "matrix_language": {
+      "type": "object",
+      "description": "Release list, repository metadata, and historical overrides for a single language in the backward-compatibility matrix.",
+      "additionalProperties": false,
+      "required": [
+        "releases"
+      ],
+      "properties": {
+        "runtimes": {
+          "type": "array",
+          "description": "Default Dockerfile runtime variants built and tested for each release of this language (corresponding to 'tools/dockerfile/interoptest/grpc_interop_<runtime>'). Defaults to '[<lang>]' when omitted; set when a language tests multiple runtimes per release (e.g. ['python', 'pythonasyncio']) or uses a versioned runtime name (e.g. ['go1.x'] or ['php7']).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "build_from_release_tag": {
+          "type": "boolean",
+          "description": "Controls which checkout's Dockerfile directory is used when building historical release images: defaults to true for languages in grpc/grpc and false for external sibling repositories (whose repos do not contain tools/dockerfile/interoptest/)."
+        },
+        "root_env_var": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Environment variable name used to pass the path of the checked-out release repository into the Docker image builder. Defaults to 'GRPC_ROOT' for grpc/grpc and 'GRPC_<REPO>_ROOT' for external sibling repositories."
+        },
+        "releases": {
+          "type": "array",
+          "description": "Chronological list of git release tags tested in the backward-compatibility matrix (empty [] for newly onboarded languages with no historical releases yet). To onboard a new release that uses the current build layout and runtimes, simply append its version tag (e.g. 'v1.77.0') to the end of this array.",
+          "items": {
+            "type": "string",
+            "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9x]+$"
+          },
+          "uniqueItems": true
+        },
+        "release_overrides": {
+          "type": "object",
+          "description": "Exceptions for older releases whose Docker runtime image, git tree, or client binary path differed from current releases. Keys can be a single tag ('v1.0.1'), an inclusive range along the 'releases' array ('v1.0.1..v1.19.0'), or a comma-separated combination. New releases that match the current '<lang>__master' entrypoint and default 'runtimes' do NOT need an entry here.",
+          "minProperties": 1,
+          "patternProperties": {
+            "^v[0-9]+\\.[0-9]+\\.[0-9x]+(\\.\\.v[0-9]+\\.[0-9]+\\.[0-9x]+)?(,v[0-9]+\\.[0-9]+\\.[0-9x]+(\\.\\.v[0-9]+\\.[0-9]+\\.[0-9x]+)?)*$": {
+              "$ref": "#/$defs/matrix_release_override"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "matrix_release_override": {
+      "type": "object",
+      "description": "Historical overrides applied to the release tag(s) matched by the parent selector key.",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "patch": {
+          "type": "array",
+          "description": "List of files modified by 'tools/interop_matrix/patches/<lang>_<release>/git_repo.patch', applied by 'runner.py matrix-build' after checking out a broken historical git tag so its Docker image can still compile. Used only for legacy tags (such as ruby v1.0.1/v1.18.0 and csharp v1.0.1).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "runtimes": {
+          "type": "array",
+          "description": "Overrides 'matrix.languages.<lang>.runtimes' for the matched historical releases (for example, older Go releases that were built with 'go1.8', 'go1.11', 'go1.16', or 'go1.19' instead of 'go1.x', or Python releases prior to v1.76 that did not build 'pythonasyncio' matrix images).",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "testcases_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the entrypoint in 'matrix.custom_entrypoints' used to invoke the client inside this release's Docker image instead of the default '<lang>__master' entrypoint. When a language has multiple runtimes (such as 'csharp' and 'csharpcoreclr'), a prefix of '<lang>__' is automatically mapped to '<runtime>__' if a runtime-specific entrypoint exists."
+        }
+      }
+    },
+    "matrix_custom_entrypoint": {
+      "type": "object",
+      "description": "Template describing how to invoke the interop client binary inside a pre-built historical release Docker image. Because historical release images in Artifact Registry are immutable snapshots built years ago, they do not contain the modern '/interop/client' entrypoint and often have older binary paths, working directories, or Python/Node/Mono runtime wrappers. Each profile captures the exact 'docker run' command shape required by a generation of release images. Modify or add a profile here only if a release changes how its client binary is invoked inside the container.",
+      "additionalProperties": false,
+      "required": [
+        "cmd"
+      ],
+      "properties": {
+        "cmd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Client executable command (and any fixed wrapper arguments) run inside the container before interop flags are appended, e.g. 'bins/opt/interop_client' for old Make-based C++ images or 'cmake/build/interop_client' for CMake-based C++ images."
+        },
+        "workdir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Container working directory passed via 'docker run -w' (defaults to '/var/local/git/grpc' when omitted). Set when the historical image built its client outside '/var/local/git/grpc' (e.g. '/go/src/google.golang.org/grpc/interop/client' for Go or '/var/local/git/grpc/src/csharp/.../net45' for C#)."
+        },
+        "host_override": {
+          "type": "boolean",
+          "description": "If true, includes '--server_host_override=<server>' and uses the legacy flag ordering expected by early v1.0-v1.19 release images."
+        },
+        "joined_flag": {
+          "type": "boolean",
+          "description": "If true, wraps all interop flags into a single '--args=\"...\"' flag (required by Python's setup.py run_interop runner) instead of passing them as separate space-delimited flags."
+        },
+        "env": {
+          "$ref": "#/$defs/env_map",
+          "description": "Environment variables passed via 'docker run -e' when running this historical image (e.g. PYTHONPATH/LD_LIBRARY_PATH for Python or GO111MODULE=on for Go v1.34+)."
+        },
+        "bash_login": {
+          "type": "boolean",
+          "description": "If true, launches the container command with 'bash -l -c' (login shell) instead of 'bash -c'. Required only for 'node__v1.0.1' where nvm was initialized in the login profile rather than via 'with_nvm.sh'."
+        }
+      }
+    }
+  }
+}

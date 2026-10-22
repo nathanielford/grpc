@@ -33,10 +33,10 @@ def random_name(base_name):
 
 
 def docker_kill(cid):
-    """Kills a docker container. Returns True if successful."""
+    """Kills and removes a docker container synchronously. Returns True if successful."""
     return (
         subprocess.call(
-            ["docker", "kill", str(cid)],
+            ["docker", "rm", "-f", str(cid)],
             stdin=subprocess.PIPE,
             stdout=_DEVNULL,
             stderr=subprocess.STDOUT,
@@ -97,7 +97,7 @@ def wait_for_healthy(cid, shortname, timeout_seconds):
                 ],
                 stderr=_DEVNULL,
             ).decode()
-            if output.strip("\n") == "healthy":
+            if output.strip("\n").strip('"') == "healthy":
                 return
         except subprocess.CalledProcessError as e:
             pass
