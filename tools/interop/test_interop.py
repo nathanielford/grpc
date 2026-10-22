@@ -247,7 +247,7 @@ def _matrix_jobspec_fields(spec, legacy=False):
 
 
 # Languages added after the initial migration that do not exist on master.
-_POST_MIGRATION_LANGUAGES = set()
+_POST_MIGRATION_LANGUAGES = {"rust"}
 
 # Test cases added after the initial migration that do not exist on master.
 _POST_MIGRATION_TEST_CASES = set()
