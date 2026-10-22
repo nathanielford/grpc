@@ -1,4 +1,4 @@
-# Copyright 2015 gRPC authors.
+# Copyright 2026 gRPC authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,16 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Capability-driven configuration re-exports from tools/interop/runner.py."""
 
-FROM debian:11
-
-{% include "../../apt_get_basic.include" %}
-{% include "../../run_tests_addons.include" %}
-
-RUN apt-get update && apt-get install -y python3 python3-pip python3-all-dev
-RUN ln -s $(which python3) /usr/bin/python
-
-{% include "../../gcp_api_libraries.include" %}
-
-{% include "../../cmake.include" %}
-{% include "../../ccache.include" %}
+from .runner import *  # noqa: F401,F403

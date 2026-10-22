@@ -14,7 +14,21 @@
 
 # Updated: 2025-11-18
 
-FROM dart:3.10.0-sdk
+ARG BASE_IMAGE=base
+FROM dart:3.10.0-sdk AS base
 
 # Define the default command.
 CMD ["bash"]
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+LABEL release="${RELEASE_LABEL}"
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+COPY --from=grpc_dart . /var/local/git/grpc-dart
+RUN cd /var/local/git/grpc-dart/interop \
+  && (/usr/lib/dart/bin/dart pub get --verbose || /usr/lib/dart/bin/dart pub get --verbose)
+RUN mkdir -p /interop \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc-dart/interop\nexec dart bin/client.dart "$@"\n' > /interop/client \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc-dart/interop\nexec dart bin/server.dart "$@"\n' > /interop/server \
+  && chmod +x /interop/client /interop/server
