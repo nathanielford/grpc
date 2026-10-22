@@ -29,7 +29,9 @@ import python_utils.jobset as jobset
 import python_utils.report_utils as report_utils
 
 # Docker doesn't clean up after itself, so we do it on exit.
-atexit.register(lambda: subprocess.call(["stty", "echo"]))
+atexit.register(
+    lambda: subprocess.call(["stty", "echo"]) if sys.stdin.isatty() else None
+)
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(sys.argv[0]), "../.."))
 os.chdir(ROOT)
@@ -347,7 +349,7 @@ def build_interop_image_jobspec(lang_safename, basename_prefix="grpc_interop"):
         "BASE_NAME": "%s_%s" % (basename_prefix, lang_safename),
     }
     build_job = jobset.JobSpec(
-        cmdline=["tools/run_tests/dockerize/build_interop_image.sh"],
+        cmdline=[sys.executable, "tools/interop/runner.py", "build-image"],
         environ=env,
         shortname="build_docker_%s" % lang_safename,
         timeout_seconds=30 * 60,

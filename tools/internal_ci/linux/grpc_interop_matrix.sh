@@ -18,14 +18,14 @@ set -ex
 export LANG=en_US.UTF-8
 
 # Enter the gRPC repo root
-cd $(dirname $0)/../../..
+cd "$(dirname "$0")/../../.."
 
 source tools/internal_ci/helper_scripts/prepare_build_linux_rc
 
 # TODO(jtattermusch): Diagnose out of disk space problems. Remove once not needed.
 df -h
 
-tools/interop_matrix/run_interop_matrix_tests.py $RUN_TESTS_FLAGS || FAILED="true"
+tools/interop/runner.py matrix-test $RUN_TESTS_FLAGS || FAILED="true"
 
 # TODO(jtattermusch): Diagnose out of disk space problems. Remove once not needed.
 df -h

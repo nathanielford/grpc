@@ -20,13 +20,13 @@ Note: some tests may be flaky. Check the "Issues" tab for known flakes and other
 
 The full suite of unit tests will take many minutes to run.
 
-# Interop tests (run_interop_tests.py)
+# Interop tests (tools/interop/runner.py)
 
 Runs tests for cross-platform/cross-language interoperability. For more details, see [Interop tests descriptions](/doc/interop-test-descriptions.md)
 The script is also capable of running interop tests for grpc-java and grpc-go, using sources checked out alongside the ones of the grpc repository.
 
 ###### Example
-`tools/run_tests/run_interop_tests.py -l python -s c++ --use_docker` (run interop tests with C# client and C++ server)
+`tools/interop/runner.py -l python -s c++ --use_docker` (run interop tests with Python client and C++ server)
 
 Note: if you see an error like `no space left on device` when running the
 interop tests using Docker, make sure that Docker is building the image files in

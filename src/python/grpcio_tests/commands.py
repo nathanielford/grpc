@@ -30,11 +30,11 @@ from setuptools.command import install
 from setuptools.command import test
 
 PYTHON_STEM = os.path.dirname(os.path.abspath(__file__))
-GRPC_STEM = os.path.abspath(PYTHON_STEM + "../../../../")
+GRPC_STEM = os.path.abspath(os.path.join(PYTHON_STEM, "../../.."))
 PYTHON_REL_PATH = os.path.relpath(PYTHON_STEM, start=GRPC_STEM)
-GRPC_PROTO_STEM = os.path.join("src", "proto")
-PROTO_STEM = os.path.join(PYTHON_REL_PATH, "src", "proto")
-PYTHON_PROTO_TOP_LEVEL = os.path.join(PYTHON_REL_PATH, "src")
+GRPC_PROTO_STEM = os.path.join(GRPC_STEM, "src", "proto")
+PROTO_STEM = os.path.join(PYTHON_STEM, "src", "proto")
+PYTHON_PROTO_TOP_LEVEL = os.path.join(PYTHON_STEM, "src")
 
 
 class CommandError:
@@ -52,8 +52,11 @@ class GatherProto(setuptools.Command):
         pass
 
     def run(self):
-        # TODO(atash) ensure that we're running from the repository directory when
-        # this command is used
+        if not os.path.isdir(GRPC_PROTO_STEM):
+            raise _errors.FileError(
+                f"Expected proto directory {GRPC_PROTO_STEM} not found; "
+                "must run from a gRPC repository checkout."
+            )
         try:
             shutil.rmtree(PROTO_STEM)
         except Exception as error:
@@ -62,7 +65,8 @@ class GatherProto(setuptools.Command):
         shutil.copytree(GRPC_PROTO_STEM, PROTO_STEM)
         for root, _, _ in os.walk(PYTHON_PROTO_TOP_LEVEL):
             path = os.path.join(root, "__init__.py")
-            open(path, "a").close()
+            with open(path, "a"):
+                pass
 
 
 class BuildPy(build_py.build_py):
@@ -208,7 +212,9 @@ class RunInterop(setuptools.Command):
             from tests_aio.interop import server
 
             sys.argv[1:] = self.args.split()
-            args = server.parse_interop_server_arguments(sys.argv)
+            args = server.interop_server_lib.parse_interop_server_arguments(
+                sys.argv
+            )
             asyncio.get_event_loop().run_until_complete(server.serve(args))
         else:
             from tests.interop import server
@@ -219,10 +225,22 @@ class RunInterop(setuptools.Command):
     def run_client(self):
         # We import here to ensure that our setuptools parent has had a chance to
         # edit the Python system path.
-        from tests.interop import client
+        if self.use_asyncio:
+            import asyncio
 
-        sys.argv[1:] = self.args.split()
-        client.test_interoperability(client.parse_interop_client_args(sys.argv))
+            from tests_aio.interop import client
+
+            sys.argv[1:] = self.args.split()
+            asyncio.get_event_loop().run_until_complete(
+                client.test_interoperability()
+            )
+        else:
+            from tests.interop import client
+
+            sys.argv[1:] = self.args.split()
+            client.test_interoperability(
+                client.parse_interop_client_args(sys.argv)
+            )
 
 
 class RunFork(setuptools.Command):

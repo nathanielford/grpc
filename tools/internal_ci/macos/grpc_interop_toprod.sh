@@ -16,13 +16,12 @@
 set -ex
 
 # avoid slow finalization after the script has exited.
-source $(dirname $0)/../../../tools/internal_ci/helper_scripts/move_src_tree_and_respawn_itself_rc
+source "$(dirname "$0")/../../../tools/internal_ci/helper_scripts/move_src_tree_and_respawn_itself_rc"
 
 # change to grpc repo root
-cd $(dirname $0)/../../..
+cd "$(dirname "$0")/../../.."
 
 source tools/internal_ci/helper_scripts/prepare_build_macos_rc
-source tools/internal_ci/helper_scripts/prepare_build_macos_interop_rc
 
 # build C++ interop client and server
 mkdir -p cmake/build
@@ -36,7 +35,7 @@ export GRPC_DEFAULT_SSL_ROOTS_FILE_PATH="$(pwd)/etc/roots.pem"
 # NOTE: only tests a subset of languages for time & dependency constraints
 # building all languages in the same working copy can also lead to conflicts
 # due to different compilation flags
-tools/run_tests/run_interop_tests.py -l c++ \
+tools/interop/runner.py -l c++ \
     --cloud_to_prod --cloud_to_prod_auth \
     --google_default_creds_use_key_file \
     --prod_servers default gateway_v4 \

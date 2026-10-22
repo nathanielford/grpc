@@ -17,6 +17,12 @@
 
 ## Root Build Outputs (/build/)
 /build/
+# Host build trees under the repo root. Interop images copy the repo via the
+# 'grpc' build context and rebuild in-container (tools/interop/runner.py).
+/cmake/build/
+/py27/
+/py39/
+/py310/
 **/.build/
 **/bins/
 **/libs/
@@ -122,3 +128,8 @@
 **/gdb.txt
 **/portlog.txt
 **/perf.data*
+
+# Interop images build gRPC from the repo root (the 'grpc' build context), so
+# vendored sources must never be filtered: several patterns above match
+# tracked directories inside submodules (e.g. BoringSSL's crypto/obj/).
+!third_party/**

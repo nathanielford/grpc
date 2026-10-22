@@ -15,6 +15,7 @@
 # limitations under the License.
 
 # Makes sure RVM is loaded before executing the command passed as an argument
+set -e
 # shellcheck disable=SC1091
 source /usr/local/rvm/scripts/rvm
-"$@"
+exec "$@"

@@ -14,8 +14,8 @@
 # limitations under the License.
 
 set -e
-cd $(dirname $0)
+cd "$(dirname "$0")"
 source ./determine_extension_dir.sh
 cd ../tests/interop
-php $extension_dir -d max_execution_time=300 \
-  interop_client.php $@ 1>&2
+exec php $extension_dir -d max_execution_time=300 \
+  interop_client.php "$@" 1>&2
