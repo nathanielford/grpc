@@ -1,8 +1,12 @@
 bazel-bin
 bazel-grpc
 bazel-out
-build
+/build
+/cmake/build
+/bins
+/libs
+/py39
+/py27
 .cache
-.git
 # python virtual environments
 */.venv*

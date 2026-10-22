@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM debian:11
+ARG BASE_IMAGE=base
+FROM debian:11 AS base
 
 #=================
 # Basic C core dependencies
@@ -119,3 +120,26 @@ RUN curl -sSL -o ccache.tar.gz https://github.com/ccache/ccache/releases/downloa
 
 RUN mkdir /var/local/jenkins
 
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+ARG GRPC_BUILD_ENABLE_CCACHE=""
+ARG CCACHE_SECONDARY_STORAGE=""
+LABEL release="${RELEASE_LABEL}"
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+COPY --from=grpc . /var/local/git/grpc
+RUN cd /var/local/git/grpc \
+  && make -j4 shared_c static_c \
+  && cd /var/local/git/grpc/src/php/ext/grpc \
+  && phpize \
+  && GRPC_LIB_SUBDIR=libs/opt ./configure --enable-grpc=/var/local/git/grpc \
+  && make -j4 \
+  && cd /var/local/git/grpc/src/php \
+  && DONE=0 \
+  && for i in 1 2 3 4 5; do php -d extension=ext/grpc/modules/grpc.so /usr/local/bin/composer install && DONE=1 && break; done \
+  && [ "$DONE" = "1" ]
+RUN mkdir -p /interop \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc\nexec src/php/bin/interop_client.sh "$@"\n' > /interop/client \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc\nexec src/php/bin/interop_server.sh "$@"\n' > /interop/server \
+  && chmod +x /interop/client /interop/server

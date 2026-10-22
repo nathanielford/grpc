@@ -1,0 +1,3534 @@
+{
+  "schema_version": "2.0",
+  "capabilities": [
+    "CORE_INTEROP",
+    "ADVANCED_INTEROP",
+    "TIMEOUT_ON_SLEEPING_SERVER",
+    "CLIENT_COMPRESSION_UNARY",
+    "CLIENT_COMPRESSION_STREAMING",
+    "SERVER_COMPRESSION_UNARY",
+    "SERVER_COMPRESSION_STREAMING",
+    "SPECIAL_STATUS_MESSAGE",
+    "DATA_FRAME_PADDING",
+    "ORCA",
+    "SINGLE_INVOCATION_SUITE",
+    "AUTH_CREDS",
+    "AUTH_KEY_FILE_FLAG",
+    "AUTH_KEY_FILE_ENV",
+    "GOOGLE_DEFAULT_CREDS",
+    "GCE_CHANNEL_CREDS",
+    "GCE_OAUTH2",
+    "OAUTH2_DEFAULT_ACCOUNT_ARG",
+    "HTTP2_INTEROP",
+    "HTTP2_SERVER_INTEROP",
+    "HTTP2_BADSERVER_CLIENT",
+    "HTTP2_BADPEER_CLIENT",
+    "TLS",
+    "INSECURE",
+    "ALTS"
+  ],
+  "defaults": {
+    "docker_workdir_root": "/var/local/git/grpc",
+    "default_server_port": 8080,
+    "prod_server_port": 443,
+    "test_timeout_seconds": 180,
+    "server_timeout_seconds": 1800,
+    "build_image_timeout_seconds": 2700,
+    "http2_server_health_timeout_seconds": 600,
+    "flake_retries": 4,
+    "timeout_retries": 2,
+    "matrix_flake_retries": 5,
+    "default_service_account_key_file": "/root/service_account/grpc-testing-ebe7c1ac7381.json",
+    "default_service_account": "830293263384-compute@developer.gserviceaccount.com",
+    "oauth_scope": "https://www.googleapis.com/auth/xapi.zoo",
+    "cloud_to_cloud_server_host_override": "foo.test.google.fr",
+    "docker_propagate_env_file": "tools/run_tests/dockerize/docker_propagate_env.list",
+    "legacy_image_builder_script": "tools/run_tests/dockerize/build_interop_image.sh",
+    "reports": {
+      "docker_build_xml": "interop_docker_build/sponge_log.xml",
+      "tests_xml": "interop_test/sponge_log.xml",
+      "matrix_xml": "report.xml",
+      "manual_server_cmds": "interop_server_cmds.sh",
+      "manual_client_cmds": "interop_client_cmds.sh"
+    }
+  },
+  "prod_servers": {
+    "default": "grpc-test.sandbox.googleapis.com",
+    "gateway_v4": "grpc-test4.sandbox.googleapis.com"
+  },
+  "prod_server_capabilities": [
+    "CORE_INTEROP",
+    "TIMEOUT_ON_SLEEPING_SERVER",
+    "HTTP2_INTEROP",
+    "AUTH_CREDS",
+    "GOOGLE_DEFAULT_CREDS",
+    "GCE_CHANNEL_CREDS",
+    "TLS"
+  ],
+  "transport_security": {
+    "tls": {
+      "client_flags": [
+        "--use_tls=true"
+      ],
+      "server_flags": [
+        "--use_tls=true"
+      ],
+      "required_capability": "TLS"
+    },
+    "alts": {
+      "client_flags": [
+        "--use_tls=false",
+        "--use_alts=true"
+      ],
+      "server_flags": [
+        "--use_tls=false",
+        "--use_alts=true"
+      ],
+      "required_capability": "ALTS"
+    },
+    "insecure": {
+      "client_flags": [
+        "--use_tls=false"
+      ],
+      "server_flags": [
+        "--use_tls=false"
+      ],
+      "required_capability": "INSECURE"
+    }
+  },
+  "custom_credentials_types": {
+    "tls": {
+      "client_flags": [
+        "--use_tls=true"
+      ],
+      "required_capability": "TLS"
+    },
+    "google_default_credentials": {
+      "client_flags": [
+        "--custom_credentials_type=google_default_credentials"
+      ],
+      "required_capability": "GOOGLE_DEFAULT_CREDS"
+    },
+    "compute_engine_channel_creds": {
+      "client_flags": [
+        "--custom_credentials_type=compute_engine_channel_creds"
+      ],
+      "required_capability": "GCE_CHANNEL_CREDS"
+    }
+  },
+  "server_order": [
+    "c++",
+    "node",
+    "aspnetcore",
+    "java",
+    "go",
+    "ruby",
+    "python",
+    "dart",
+    "pythonasyncio",
+    "php7"
+  ],
+  "suites": {
+    "cloud_to_cloud": {
+      "description": "Cross-language client-to-server interop tests in Docker containers.",
+      "shortname_template": "cloud_to_cloud:{client}:{server}_server:{test_case}:{transport_security}",
+      "default_transport_security": "tls",
+      "client_extra_flags": [
+        "--server_host_override=foo.test.google.fr",
+        "--use_test_ca=true"
+      ]
+    },
+    "cloud_to_prod": {
+      "description": "Client-to-production server interop tests over TLS / custom credentials.",
+      "shortname_template": "cloud_to_prod:{client}:{server_host_nickname}:{test_case}:{transport_security}",
+      "default_transport_security": "tls"
+    },
+    "cloud_to_prod_auth": {
+      "description": "Client-to-production authentication and credential interop tests.",
+      "shortname_template": "cloud_to_prod_auth:{client}:{server_host_nickname}:{test_case}:{transport_security}",
+      "default_transport_security": "tls"
+    },
+    "http2_client": {
+      "description": "HTTP/2 edge-case client tests against cloud_to_prod and cloud_to_cloud servers.",
+      "required_server_capability": "HTTP2_INTEROP"
+    },
+    "http2_server": {
+      "description": "HTTP/2 negative and framing edge-case server tests across 8 ports.",
+      "required_client_capability": "HTTP2_BADSERVER_CLIENT"
+    },
+    "matrix": {
+      "description": "Historical gRPC client release backward-compatibility matrix tests.",
+      "shortname_template": "{suite_name}:{lang}:{server_short}:{testcase_name}",
+      "junit_package": "grpc_interop_matrix"
+    }
+  },
+  "test_cases": {
+    "standard": [
+      {
+        "name": "large_unary",
+        "cloud_to_prod_eligible": true,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "empty_unary",
+        "cloud_to_prod_eligible": true,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "ping_pong",
+        "cloud_to_prod_eligible": true,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "empty_stream",
+        "cloud_to_prod_eligible": true,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "client_streaming",
+        "cloud_to_prod_eligible": true,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "server_streaming",
+        "cloud_to_prod_eligible": true,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "cancel_after_begin",
+        "cloud_to_prod_eligible": true,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "cancel_after_first_response",
+        "cloud_to_prod_eligible": true,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "timeout_on_sleeping_server",
+        "cloud_to_prod_eligible": true,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "custom_metadata",
+        "cloud_to_prod_eligible": false,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "status_code_and_message",
+        "cloud_to_prod_eligible": false,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "unimplemented_method",
+        "cloud_to_prod_eligible": false,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "client_compressed_unary",
+        "cloud_to_prod_eligible": false,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "server_compressed_unary",
+        "cloud_to_prod_eligible": false,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "client_compressed_streaming",
+        "cloud_to_prod_eligible": false,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "server_compressed_streaming",
+        "cloud_to_prod_eligible": false,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "unimplemented_service",
+        "cloud_to_prod_eligible": false,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "special_status_message",
+        "cloud_to_prod_eligible": false,
+        "extra_cloud_to_cloud_flags": []
+      },
+      {
+        "name": "orca_per_rpc",
+        "cloud_to_prod_eligible": false,
+        "extra_cloud_to_cloud_flags": [
+          "--service_config_json='{\"loadBalancingConfig\":[{\"test_backend_metrics_load_balancer\":{}}]}'"
+        ]
+      },
+      {
+        "name": "orca_oob",
+        "cloud_to_prod_eligible": false,
+        "extra_cloud_to_cloud_flags": [
+          "--service_config_json='{\"loadBalancingConfig\":[{\"test_backend_metrics_load_balancer\":{}}]}'"
+        ]
+      }
+    ],
+    "auth": [
+      {
+        "name": "compute_engine_creds",
+        "transport_security": "tls",
+        "requires_compute_engine_creds": true,
+        "uses_service_account_key": false,
+        "uses_service_account_key_when_flag": null,
+        "uses_oauth_scope": true,
+        "uses_default_service_account": true,
+        "requires_compute_engine_creds_capability": null,
+        "uses_default_service_account_capability": null
+      },
+      {
+        "name": "jwt_token_creds",
+        "transport_security": "tls",
+        "requires_compute_engine_creds": false,
+        "uses_service_account_key": true,
+        "uses_service_account_key_when_flag": null,
+        "uses_oauth_scope": false,
+        "uses_default_service_account": false,
+        "requires_compute_engine_creds_capability": null,
+        "uses_default_service_account_capability": null
+      },
+      {
+        "name": "oauth2_auth_token",
+        "transport_security": "tls",
+        "requires_compute_engine_creds": false,
+        "uses_service_account_key": true,
+        "uses_service_account_key_when_flag": null,
+        "uses_oauth_scope": true,
+        "uses_default_service_account": false,
+        "requires_compute_engine_creds_capability": "GCE_OAUTH2",
+        "uses_default_service_account_capability": "OAUTH2_DEFAULT_ACCOUNT_ARG"
+      },
+      {
+        "name": "per_rpc_creds",
+        "transport_security": "tls",
+        "requires_compute_engine_creds": false,
+        "uses_service_account_key": true,
+        "uses_service_account_key_when_flag": null,
+        "uses_oauth_scope": true,
+        "uses_default_service_account": false,
+        "requires_compute_engine_creds_capability": null,
+        "uses_default_service_account_capability": null
+      },
+      {
+        "name": "google_default_credentials",
+        "transport_security": "google_default_credentials",
+        "requires_compute_engine_creds": false,
+        "uses_service_account_key": false,
+        "uses_service_account_key_when_flag": "google_default_creds_use_key_file",
+        "uses_oauth_scope": false,
+        "uses_default_service_account": true,
+        "requires_compute_engine_creds_capability": null,
+        "uses_default_service_account_capability": null
+      },
+      {
+        "name": "compute_engine_channel_credentials",
+        "transport_security": "compute_engine_channel_creds",
+        "requires_compute_engine_creds": false,
+        "uses_service_account_key": false,
+        "uses_service_account_key_when_flag": null,
+        "uses_oauth_scope": false,
+        "uses_default_service_account": true,
+        "requires_compute_engine_creds_capability": null,
+        "uses_default_service_account_capability": null
+      }
+    ],
+    "http2_client": [
+      {
+        "name": "tls"
+      },
+      {
+        "name": "framing"
+      }
+    ],
+    "http2_server": [
+      {
+        "name": "rst_after_header",
+        "client_kind": "http2_interop",
+        "grpc_client_test_case": null,
+        "transport_security_override": null
+      },
+      {
+        "name": "rst_after_data",
+        "client_kind": "http2_interop",
+        "grpc_client_test_case": null,
+        "transport_security_override": null
+      },
+      {
+        "name": "rst_during_data",
+        "client_kind": "http2_interop",
+        "grpc_client_test_case": null,
+        "transport_security_override": null
+      },
+      {
+        "name": "goaway",
+        "client_kind": "http2_interop",
+        "grpc_client_test_case": null,
+        "transport_security_override": null
+      },
+      {
+        "name": "ping",
+        "client_kind": "http2_interop",
+        "grpc_client_test_case": null,
+        "transport_security_override": null
+      },
+      {
+        "name": "max_streams",
+        "client_kind": "http2_interop",
+        "grpc_client_test_case": null,
+        "transport_security_override": null
+      },
+      {
+        "name": "data_frame_padding",
+        "client_kind": "grpc_client",
+        "grpc_client_test_case": "large_unary",
+        "transport_security_override": "insecure"
+      },
+      {
+        "name": "no_df_padding_sanity_test",
+        "client_kind": "grpc_client",
+        "grpc_client_test_case": "large_unary",
+        "transport_security_override": "insecure"
+      }
+    ]
+  },
+  "test_case_capabilities": {
+    "large_unary": {
+      "client": [
+        "CORE_INTEROP"
+      ],
+      "server": [
+        "CORE_INTEROP"
+      ]
+    },
+    "empty_unary": {
+      "client": [
+        "CORE_INTEROP"
+      ],
+      "server": [
+        "CORE_INTEROP"
+      ]
+    },
+    "ping_pong": {
+      "client": [
+        "CORE_INTEROP"
+      ],
+      "server": [
+        "CORE_INTEROP"
+      ]
+    },
+    "empty_stream": {
+      "client": [
+        "CORE_INTEROP"
+      ],
+      "server": [
+        "CORE_INTEROP"
+      ]
+    },
+    "client_streaming": {
+      "client": [
+        "CORE_INTEROP"
+      ],
+      "server": [
+        "CORE_INTEROP"
+      ]
+    },
+    "server_streaming": {
+      "client": [
+        "CORE_INTEROP"
+      ],
+      "server": [
+        "CORE_INTEROP"
+      ]
+    },
+    "cancel_after_begin": {
+      "client": [
+        "CORE_INTEROP"
+      ],
+      "server": [
+        "CORE_INTEROP"
+      ]
+    },
+    "cancel_after_first_response": {
+      "client": [
+        "CORE_INTEROP"
+      ],
+      "server": [
+        "CORE_INTEROP"
+      ]
+    },
+    "timeout_on_sleeping_server": {
+      "client": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER"
+      ],
+      "server": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER"
+      ]
+    },
+    "custom_metadata": {
+      "client": [
+        "CORE_INTEROP",
+        "ADVANCED_INTEROP"
+      ],
+      "server": [
+        "CORE_INTEROP",
+        "ADVANCED_INTEROP"
+      ]
+    },
+    "status_code_and_message": {
+      "client": [
+        "CORE_INTEROP",
+        "ADVANCED_INTEROP"
+      ],
+      "server": [
+        "CORE_INTEROP",
+        "ADVANCED_INTEROP"
+      ]
+    },
+    "unimplemented_method": {
+      "client": [
+        "CORE_INTEROP",
+        "ADVANCED_INTEROP"
+      ],
+      "server": [
+        "CORE_INTEROP",
+        "ADVANCED_INTEROP"
+      ]
+    },
+    "unimplemented_service": {
+      "client": [
+        "CORE_INTEROP",
+        "ADVANCED_INTEROP"
+      ],
+      "server": [
+        "CORE_INTEROP",
+        "ADVANCED_INTEROP"
+      ]
+    },
+    "client_compressed_unary": {
+      "client": [
+        "CORE_INTEROP",
+        "CLIENT_COMPRESSION_UNARY"
+      ],
+      "server": [
+        "CORE_INTEROP",
+        "CLIENT_COMPRESSION_UNARY"
+      ]
+    },
+    "client_compressed_streaming": {
+      "client": [
+        "CORE_INTEROP",
+        "CLIENT_COMPRESSION_STREAMING"
+      ],
+      "server": [
+        "CORE_INTEROP",
+        "CLIENT_COMPRESSION_STREAMING"
+      ]
+    },
+    "server_compressed_unary": {
+      "client": [
+        "CORE_INTEROP",
+        "SERVER_COMPRESSION_UNARY"
+      ],
+      "server": [
+        "CORE_INTEROP",
+        "SERVER_COMPRESSION_UNARY"
+      ]
+    },
+    "server_compressed_streaming": {
+      "client": [
+        "CORE_INTEROP",
+        "SERVER_COMPRESSION_STREAMING"
+      ],
+      "server": [
+        "CORE_INTEROP",
+        "SERVER_COMPRESSION_STREAMING"
+      ]
+    },
+    "special_status_message": {
+      "client": [
+        "CORE_INTEROP",
+        "SPECIAL_STATUS_MESSAGE"
+      ],
+      "server": [
+        "CORE_INTEROP",
+        "SPECIAL_STATUS_MESSAGE"
+      ]
+    },
+    "orca_per_rpc": {
+      "client": [
+        "CORE_INTEROP",
+        "ORCA"
+      ],
+      "server": [
+        "CORE_INTEROP",
+        "ORCA"
+      ]
+    },
+    "orca_oob": {
+      "client": [
+        "CORE_INTEROP",
+        "ORCA"
+      ],
+      "server": [
+        "CORE_INTEROP",
+        "ORCA"
+      ]
+    },
+    "compute_engine_creds": {
+      "client": [
+        "AUTH_CREDS"
+      ],
+      "server": [
+        "AUTH_CREDS"
+      ]
+    },
+    "jwt_token_creds": {
+      "client": [
+        "AUTH_CREDS"
+      ],
+      "server": [
+        "AUTH_CREDS"
+      ]
+    },
+    "oauth2_auth_token": {
+      "client": [
+        "AUTH_CREDS"
+      ],
+      "server": [
+        "AUTH_CREDS"
+      ]
+    },
+    "per_rpc_creds": {
+      "client": [
+        "AUTH_CREDS"
+      ],
+      "server": [
+        "AUTH_CREDS"
+      ]
+    },
+    "google_default_credentials": {
+      "client": [
+        "GOOGLE_DEFAULT_CREDS"
+      ],
+      "server": [
+        "GOOGLE_DEFAULT_CREDS"
+      ]
+    },
+    "compute_engine_channel_credentials": {
+      "client": [
+        "GCE_CHANNEL_CREDS"
+      ],
+      "server": [
+        "GCE_CHANNEL_CREDS"
+      ]
+    },
+    "tls": {
+      "client": [
+        "HTTP2_INTEROP"
+      ],
+      "server": [
+        "HTTP2_INTEROP"
+      ]
+    },
+    "framing": {
+      "client": [
+        "HTTP2_INTEROP"
+      ],
+      "server": [
+        "HTTP2_INTEROP"
+      ]
+    },
+    "rst_after_header": {
+      "client": [
+        "HTTP2_BADSERVER_CLIENT",
+        "HTTP2_BADPEER_CLIENT"
+      ],
+      "server": [
+        "HTTP2_SERVER_INTEROP"
+      ]
+    },
+    "rst_after_data": {
+      "client": [
+        "HTTP2_BADSERVER_CLIENT",
+        "HTTP2_BADPEER_CLIENT"
+      ],
+      "server": [
+        "HTTP2_SERVER_INTEROP"
+      ]
+    },
+    "rst_during_data": {
+      "client": [
+        "HTTP2_BADSERVER_CLIENT",
+        "HTTP2_BADPEER_CLIENT"
+      ],
+      "server": [
+        "HTTP2_SERVER_INTEROP"
+      ]
+    },
+    "goaway": {
+      "client": [
+        "HTTP2_BADSERVER_CLIENT",
+        "HTTP2_BADPEER_CLIENT"
+      ],
+      "server": [
+        "HTTP2_SERVER_INTEROP"
+      ]
+    },
+    "ping": {
+      "client": [
+        "HTTP2_BADSERVER_CLIENT",
+        "HTTP2_BADPEER_CLIENT"
+      ],
+      "server": [
+        "HTTP2_SERVER_INTEROP"
+      ]
+    },
+    "max_streams": {
+      "client": [
+        "HTTP2_BADSERVER_CLIENT",
+        "HTTP2_BADPEER_CLIENT"
+      ],
+      "server": [
+        "HTTP2_SERVER_INTEROP"
+      ]
+    },
+    "data_frame_padding": {
+      "client": [
+        "DATA_FRAME_PADDING"
+      ],
+      "server": [
+        "HTTP2_SERVER_INTEROP"
+      ]
+    },
+    "no_df_padding_sanity_test": {
+      "client": [
+        "CORE_INTEROP"
+      ],
+      "server": [
+        "HTTP2_SERVER_INTEROP"
+      ]
+    }
+  },
+  "languages": {
+    "c++": {
+      "safename": "cxx",
+      "repo": "grpc/grpc",
+      "included_in_all_clients": true,
+      "supports_server": true,
+      "docker_supported": true,
+      "auth_credentials_mode": "flag",
+      "client_cwd": null,
+      "server_cwd": null,
+      "http2_cwd": null,
+      "global_env": {},
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "cmake/build/interop_client"
+        ],
+        "args_mode": "append"
+      },
+      "server_cmd": {
+        "command": [
+          "cmake/build/interop_server"
+        ],
+        "args_mode": "append"
+      },
+      "http2_client_cmd": {
+        "command": [
+          "cmake/build/http2_client"
+        ],
+        "args_mode": "append"
+      },
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SERVER_COMPRESSION_UNARY",
+        "SERVER_COMPRESSION_STREAMING",
+        "ORCA",
+        "HTTP2_BADSERVER_CLIENT",
+        "HTTP2_BADPEER_CLIENT",
+        "ALTS",
+        "AUTH_CREDS",
+        "GOOGLE_DEFAULT_CREDS",
+        "AUTH_KEY_FILE_FLAG",
+        "GCE_OAUTH2",
+        "OAUTH2_DEFAULT_ACCOUNT_ARG"
+      ],
+      "server_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SERVER_COMPRESSION_UNARY",
+        "SERVER_COMPRESSION_STREAMING",
+        "SPECIAL_STATUS_MESSAGE",
+        "ORCA",
+        "ALTS",
+        "HTTP2_INTEROP"
+      ],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": [
+          "/interop/server"
+        ],
+        "http2_client": [
+          "/interop/http2_client"
+        ]
+      },
+      "legacy_class_name": "CXXLanguage"
+    },
+    "aspnetcore": {
+      "safename": "aspnetcore",
+      "repo": "grpc/grpc-dotnet",
+      "included_in_all_clients": true,
+      "supports_server": true,
+      "docker_supported": true,
+      "auth_credentials_mode": "env",
+      "client_cwd": "../grpc-dotnet/output/InteropTestsClient",
+      "server_cwd": "../grpc-dotnet/output/InteropTestsWebsite",
+      "http2_cwd": null,
+      "global_env": {},
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "dotnet",
+          "exec",
+          "InteropTestsClient.dll"
+        ],
+        "args_mode": "append"
+      },
+      "server_cmd": {
+        "command": [
+          "dotnet",
+          "exec",
+          "InteropTestsWebsite.dll"
+        ],
+        "args_mode": "append"
+      },
+      "http2_client_cmd": null,
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SERVER_COMPRESSION_UNARY",
+        "SERVER_COMPRESSION_STREAMING",
+        "SPECIAL_STATUS_MESSAGE",
+        "DATA_FRAME_PADDING",
+        "AUTH_CREDS",
+        "AUTH_KEY_FILE_ENV"
+      ],
+      "server_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SERVER_COMPRESSION_UNARY",
+        "SERVER_COMPRESSION_STREAMING",
+        "SPECIAL_STATUS_MESSAGE",
+        "HTTP2_INTEROP"
+      ],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": [
+          "/interop/server"
+        ],
+        "http2_client": null
+      },
+      "legacy_class_name": "AspNetCoreLanguage"
+    },
+    "dart": {
+      "safename": "dart",
+      "repo": "grpc/grpc-dart",
+      "included_in_all_clients": true,
+      "supports_server": true,
+      "docker_supported": true,
+      "auth_credentials_mode": "flag",
+      "client_cwd": "../grpc-dart/interop",
+      "server_cwd": "../grpc-dart/interop",
+      "http2_cwd": "../grpc-dart/interop",
+      "global_env": {},
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "dart",
+          "bin/client.dart"
+        ],
+        "args_mode": "append"
+      },
+      "server_cmd": {
+        "command": [
+          "dart",
+          "bin/server.dart"
+        ],
+        "args_mode": "append"
+      },
+      "http2_client_cmd": null,
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "DATA_FRAME_PADDING",
+        "AUTH_CREDS",
+        "AUTH_KEY_FILE_FLAG"
+      ],
+      "server_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "HTTP2_INTEROP"
+      ],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": [
+          "/interop/server"
+        ],
+        "http2_client": null
+      },
+      "legacy_class_name": "DartLanguage"
+    },
+    "java": {
+      "safename": "java",
+      "repo": "grpc/grpc-java",
+      "included_in_all_clients": true,
+      "supports_server": true,
+      "docker_supported": true,
+      "auth_credentials_mode": "flag",
+      "client_cwd": "../grpc-java",
+      "server_cwd": "../grpc-java",
+      "http2_cwd": "../grpc-java",
+      "global_env": {},
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "./run-test-client.sh"
+        ],
+        "args_mode": "append"
+      },
+      "server_cmd": {
+        "command": [
+          "./run-test-server.sh"
+        ],
+        "args_mode": "append"
+      },
+      "http2_client_cmd": {
+        "command": [
+          "./interop-testing/build/install/grpc-interop-testing/bin/http2-client"
+        ],
+        "args_mode": "append"
+      },
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SERVER_COMPRESSION_UNARY",
+        "SERVER_COMPRESSION_STREAMING",
+        "SPECIAL_STATUS_MESSAGE",
+        "ORCA",
+        "DATA_FRAME_PADDING",
+        "HTTP2_BADSERVER_CLIENT",
+        "HTTP2_BADPEER_CLIENT",
+        "ALTS",
+        "AUTH_CREDS",
+        "GOOGLE_DEFAULT_CREDS",
+        "GCE_CHANNEL_CREDS",
+        "AUTH_KEY_FILE_FLAG"
+      ],
+      "server_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "SERVER_COMPRESSION_UNARY",
+        "SPECIAL_STATUS_MESSAGE",
+        "ORCA",
+        "ALTS",
+        "HTTP2_INTEROP"
+      ],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": [
+          "/interop/server"
+        ],
+        "http2_client": [
+          "/interop/http2_client"
+        ]
+      },
+      "legacy_class_name": "JavaLanguage"
+    },
+    "javaokhttp": {
+      "safename": "java",
+      "repo": "grpc/grpc-java",
+      "included_in_all_clients": true,
+      "supports_server": false,
+      "docker_supported": true,
+      "auth_credentials_mode": "flag",
+      "client_cwd": "../grpc-java",
+      "server_cwd": null,
+      "http2_cwd": null,
+      "global_env": {},
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "./run-test-client.sh",
+          "--use_okhttp=true"
+        ],
+        "args_mode": "append"
+      },
+      "server_cmd": null,
+      "http2_client_cmd": null,
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SERVER_COMPRESSION_UNARY",
+        "SERVER_COMPRESSION_STREAMING",
+        "SPECIAL_STATUS_MESSAGE",
+        "ORCA",
+        "AUTH_CREDS",
+        "GOOGLE_DEFAULT_CREDS",
+        "GCE_CHANNEL_CREDS",
+        "AUTH_KEY_FILE_FLAG"
+      ],
+      "server_capabilities": [],
+      "contract_commands": {
+        "client": [
+          "/interop/client",
+          "--use_okhttp=true"
+        ],
+        "server": null,
+        "http2_client": null
+      },
+      "legacy_class_name": "JavaOkHttpClient"
+    },
+    "go": {
+      "safename": "go",
+      "repo": "grpc/grpc-go",
+      "included_in_all_clients": true,
+      "supports_server": true,
+      "docker_supported": true,
+      "auth_credentials_mode": "flag",
+      "client_cwd": "/go/src/google.golang.org/grpc/interop/client",
+      "server_cwd": "/go/src/google.golang.org/grpc/interop/server",
+      "http2_cwd": "/go/src/google.golang.org/grpc/interop/http2",
+      "global_env": {
+        "GO111MODULE": "on"
+      },
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "go",
+          "run",
+          "client.go"
+        ],
+        "args_mode": "append"
+      },
+      "server_cmd": {
+        "command": [
+          "go",
+          "run",
+          "server.go"
+        ],
+        "args_mode": "append"
+      },
+      "http2_client_cmd": {
+        "command": [
+          "go",
+          "run",
+          "negative_http2_client.go"
+        ],
+        "args_mode": "append"
+      },
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "SPECIAL_STATUS_MESSAGE",
+        "ORCA",
+        "DATA_FRAME_PADDING",
+        "HTTP2_BADSERVER_CLIENT",
+        "HTTP2_BADPEER_CLIENT",
+        "ALTS",
+        "AUTH_CREDS",
+        "GOOGLE_DEFAULT_CREDS",
+        "GCE_CHANNEL_CREDS",
+        "AUTH_KEY_FILE_FLAG"
+      ],
+      "server_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "SPECIAL_STATUS_MESSAGE",
+        "ORCA",
+        "ALTS"
+      ],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": [
+          "/interop/server"
+        ],
+        "http2_client": [
+          "/interop/http2_client"
+        ]
+      },
+      "legacy_class_name": "GoLanguage"
+    },
+    "node": {
+      "safename": "node",
+      "repo": "grpc/grpc-node",
+      "included_in_all_clients": true,
+      "supports_server": true,
+      "docker_supported": true,
+      "auth_credentials_mode": "env",
+      "client_cwd": "../../../../home/appuser/grpc-node",
+      "server_cwd": "../../../../home/appuser/grpc-node",
+      "http2_cwd": null,
+      "global_env": {},
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh",
+          "node",
+          "--require",
+          "./test/fixtures/native_native",
+          "test/interop/interop_client.js"
+        ],
+        "args_mode": "append"
+      },
+      "server_cmd": {
+        "command": [
+          "packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh",
+          "node",
+          "--require",
+          "./test/fixtures/native_native",
+          "test/interop/interop_server.js"
+        ],
+        "args_mode": "append"
+      },
+      "http2_client_cmd": null,
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "SPECIAL_STATUS_MESSAGE",
+        "AUTH_CREDS",
+        "AUTH_KEY_FILE_ENV"
+      ],
+      "server_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "SPECIAL_STATUS_MESSAGE",
+        "HTTP2_INTEROP"
+      ],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": [
+          "/interop/server"
+        ],
+        "http2_client": null
+      },
+      "legacy_class_name": "NodeLanguage"
+    },
+    "nodepurejs": {
+      "safename": "nodepurejs",
+      "repo": "grpc/grpc-node",
+      "included_in_all_clients": true,
+      "supports_server": false,
+      "docker_supported": true,
+      "auth_credentials_mode": "env",
+      "client_cwd": "../../../../home/appuser/grpc-node",
+      "server_cwd": "../../../../home/appuser/grpc-node",
+      "http2_cwd": null,
+      "global_env": {},
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh",
+          "node",
+          "--require",
+          "./test/fixtures/js_js",
+          "test/interop/interop_client.js"
+        ],
+        "args_mode": "append"
+      },
+      "server_cmd": null,
+      "http2_client_cmd": null,
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "SPECIAL_STATUS_MESSAGE",
+        "AUTH_CREDS",
+        "AUTH_KEY_FILE_ENV"
+      ],
+      "server_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SERVER_COMPRESSION_UNARY",
+        "SERVER_COMPRESSION_STREAMING",
+        "SPECIAL_STATUS_MESSAGE"
+      ],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": null,
+        "http2_client": null
+      },
+      "legacy_class_name": "NodePureJSLanguage"
+    },
+    "php7": {
+      "safename": "php7",
+      "repo": "grpc/grpc",
+      "included_in_all_clients": true,
+      "supports_server": true,
+      "docker_supported": true,
+      "auth_credentials_mode": "env",
+      "client_cwd": null,
+      "server_cwd": null,
+      "http2_cwd": null,
+      "global_env": {},
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "src/php/bin/interop_client.sh"
+        ],
+        "args_mode": "append"
+      },
+      "server_cmd": {
+        "command": [
+          "src/php/bin/interop_server.sh"
+        ],
+        "args_mode": "append"
+      },
+      "http2_client_cmd": null,
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SPECIAL_STATUS_MESSAGE",
+        "AUTH_CREDS",
+        "AUTH_KEY_FILE_ENV"
+      ],
+      "server_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "SPECIAL_STATUS_MESSAGE",
+        "HTTP2_INTEROP"
+      ],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": [
+          "/interop/server"
+        ],
+        "http2_client": null
+      },
+      "legacy_class_name": "PHP7Language"
+    },
+    "objc": {
+      "safename": "objc",
+      "repo": "grpc/grpc",
+      "included_in_all_clients": false,
+      "supports_server": false,
+      "docker_supported": false,
+      "auth_credentials_mode": "flag",
+      "client_cwd": "src/objective-c/tests",
+      "server_cwd": null,
+      "http2_cwd": null,
+      "global_env": {},
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [],
+        "args_mode": "extract_port_template",
+        "port_regex": "--server_port=(\\d+)",
+        "arg_template": "pod install && xcodebuild -workspace Tests.xcworkspace -scheme InteropTestsLocalSSL -destination name=\"iPhone 6\" HOST_PORT_LOCALSSL=localhost:{port} test"
+      },
+      "server_cmd": null,
+      "http2_client_cmd": null,
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "SINGLE_INVOCATION_SUITE",
+        "AUTH_CREDS",
+        "AUTH_KEY_FILE_FLAG",
+        "TLS",
+        "INSECURE"
+      ],
+      "server_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "SPECIAL_STATUS_MESSAGE"
+      ],
+      "contract_commands": {
+        "client": null,
+        "server": null,
+        "http2_client": null
+      },
+      "legacy_class_name": "ObjcLanguage"
+    },
+    "ruby": {
+      "safename": "ruby",
+      "repo": "grpc/grpc",
+      "included_in_all_clients": true,
+      "supports_server": true,
+      "docker_supported": true,
+      "auth_credentials_mode": "env",
+      "client_cwd": null,
+      "server_cwd": null,
+      "http2_cwd": null,
+      "global_env": {},
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "tools/run_tests/interop/with_rvm.sh",
+          "ruby",
+          "src/ruby/pb/test/client.rb"
+        ],
+        "args_mode": "append"
+      },
+      "server_cmd": {
+        "command": [
+          "tools/run_tests/interop/with_rvm.sh",
+          "ruby",
+          "src/ruby/pb/test/server.rb"
+        ],
+        "args_mode": "append"
+      },
+      "http2_client_cmd": null,
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SPECIAL_STATUS_MESSAGE",
+        "AUTH_CREDS",
+        "AUTH_KEY_FILE_ENV"
+      ],
+      "server_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "SPECIAL_STATUS_MESSAGE",
+        "HTTP2_INTEROP"
+      ],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": [
+          "/interop/server"
+        ],
+        "http2_client": null
+      },
+      "legacy_class_name": "RubyLanguage"
+    },
+    "python": {
+      "safename": "python",
+      "repo": "grpc/grpc",
+      "included_in_all_clients": true,
+      "supports_server": true,
+      "docker_supported": true,
+      "auth_credentials_mode": "env",
+      "client_cwd": null,
+      "server_cwd": null,
+      "http2_cwd": null,
+      "global_env": {
+        "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt",
+        "PYTHONPATH": "/var/local/git/grpc/src/python/gens"
+      },
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "py39/bin/python",
+          "src/python/grpcio_tests/setup.py",
+          "run_interop",
+          "--client"
+        ],
+        "args_mode": "joined_flag",
+        "arg_template": "--args=\"{args}\""
+      },
+      "server_cmd": {
+        "command": [
+          "py39/bin/python",
+          "src/python/grpcio_tests/setup.py",
+          "run_interop",
+          "--server"
+        ],
+        "args_mode": "joined_flag",
+        "arg_template": "--args=\"{args}\""
+      },
+      "http2_client_cmd": {
+        "command": [
+          "py39/bin/python",
+          "src/python/grpcio_tests/tests/http2/negative_http2_client.py"
+        ],
+        "args_mode": "append"
+      },
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "SPECIAL_STATUS_MESSAGE",
+        "HTTP2_BADSERVER_CLIENT",
+        "HTTP2_BADPEER_CLIENT",
+        "ALTS",
+        "AUTH_CREDS",
+        "AUTH_KEY_FILE_ENV"
+      ],
+      "server_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "SPECIAL_STATUS_MESSAGE",
+        "ALTS",
+        "HTTP2_INTEROP"
+      ],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": [
+          "/interop/server"
+        ],
+        "http2_client": [
+          "/interop/http2_client"
+        ]
+      },
+      "legacy_class_name": "PythonLanguage"
+    },
+    "pythonasyncio": {
+      "safename": "pythonasyncio",
+      "repo": "grpc/grpc",
+      "included_in_all_clients": true,
+      "supports_server": true,
+      "docker_supported": true,
+      "auth_credentials_mode": "env",
+      "client_cwd": null,
+      "server_cwd": null,
+      "http2_cwd": null,
+      "global_env": {
+        "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt",
+        "PYTHONPATH": "/var/local/git/grpc/src/python/gens"
+      },
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "py39/bin/python",
+          "src/python/grpcio_tests/setup.py",
+          "run_interop",
+          "--use-asyncio",
+          "--client"
+        ],
+        "args_mode": "joined_flag",
+        "arg_template": "--args=\"{args}\""
+      },
+      "server_cmd": {
+        "command": [
+          "py39/bin/python",
+          "src/python/grpcio_tests/setup.py",
+          "run_interop",
+          "--use-asyncio",
+          "--server"
+        ],
+        "args_mode": "joined_flag",
+        "arg_template": "--args=\"{args}\""
+      },
+      "http2_client_cmd": {
+        "command": [
+          "py39/bin/python",
+          "src/python/grpcio_tests/tests/http2/negative_http2_client.py"
+        ],
+        "args_mode": "append"
+      },
+      "in_runner_languages": true,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "ADVANCED_INTEROP",
+        "SPECIAL_STATUS_MESSAGE",
+        "TLS",
+        "INSECURE"
+      ],
+      "server_capabilities": [],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": [
+          "/interop/server"
+        ],
+        "http2_client": [
+          "/interop/http2_client"
+        ]
+      },
+      "legacy_class_name": "PythonAsyncIOLanguage"
+    },
+    "http2": {
+      "safename": "http2",
+      "repo": "grpc/grpc",
+      "included_in_all_clients": false,
+      "supports_server": false,
+      "is_http2_target": true,
+      "docker_supported": true,
+      "auth_credentials_mode": "flag",
+      "client_cwd": null,
+      "server_cwd": null,
+      "http2_cwd": null,
+      "global_env": {},
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "tools/http2_interop/http2_interop.test",
+          "-test.v"
+        ],
+        "args_mode": "append"
+      },
+      "server_cmd": {
+        "command": [
+          "python test/http2_test/http2_test_server.py"
+        ],
+        "args_mode": "ignore_args"
+      },
+      "http2_client_cmd": null,
+      "server_docker_config": {
+        "port_count_from_suite": "http2_server",
+        "healthcheck": {
+          "cmd_template": "python test/http2_test/http2_server_health_check.py --server_host=localhost --server_port={port}",
+          "interval": "1s",
+          "retries": 5,
+          "timeout": "10s",
+          "wait_timeout_seconds": 600
+        }
+      },
+      "in_runner_languages": false,
+      "client_capabilities": [
+        "HTTP2_INTEROP",
+        "TLS",
+        "INSECURE",
+        "ALTS"
+      ],
+      "server_capabilities": [
+        "HTTP2_SERVER_INTEROP",
+        "INSECURE",
+        "TLS"
+      ],
+      "http2_server_client_capabilities": [
+        "HTTP2_SERVER_INTEROP"
+      ],
+      "http2_client_server_capabilities": [
+        "HTTP2_INTEROP"
+      ],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": {
+          "command": [
+            "/interop/server"
+          ],
+          "args_mode": "ignore_args"
+        },
+        "http2_client": null
+      },
+      "legacy_class_name": "Http2Client"
+    },
+    "csharp": {
+      "safename": "csharp",
+      "repo": "grpc",
+      "in_runner_languages": false,
+      "included_in_all_clients": false,
+      "supports_server": false,
+      "docker_supported": true,
+      "auth_credentials_mode": "env",
+      "client_cwd": "src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45",
+      "server_cwd": "src/csharp/Grpc.IntegrationTesting.Server/bin/Debug/net45",
+      "http2_cwd": null,
+      "global_env": {},
+      "cloud_to_prod_env": {},
+      "client_cmd": {
+        "command": [
+          "mono",
+          "Grpc.IntegrationTesting.Client.exe"
+        ],
+        "args_mode": "append"
+      },
+      "server_cmd": {
+        "command": [
+          "mono",
+          "Grpc.IntegrationTesting.Server.exe"
+        ],
+        "args_mode": "append"
+      },
+      "http2_client_cmd": null,
+      "client_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SPECIAL_STATUS_MESSAGE",
+        "AUTH_CREDS",
+        "AUTH_KEY_FILE_ENV"
+      ],
+      "server_capabilities": [
+        "CORE_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "ADVANCED_INTEROP",
+        "TLS",
+        "INSECURE",
+        "SPECIAL_STATUS_MESSAGE",
+        "HTTP2_INTEROP"
+      ],
+      "contract_commands": {
+        "client": [
+          "/interop/client"
+        ],
+        "server": [
+          "/interop/server"
+        ],
+        "http2_client": null
+      },
+      "legacy_class_name": "CSharpLanguage"
+    }
+  },
+  "matrix": {
+    "default_server_host": "74.125.206.210",
+    "default_docker_path": "us-docker.pkg.dev/grpc-testing/testing-images-public",
+    "default_git_checkout_root": "/export/hda3/tmp/grpc_matrix",
+    "build_info_dir": "/var/local/build_info",
+    "test_timeout_seconds": 60,
+    "pull_image_timeout_seconds": 900,
+    "build_image_timeout_seconds": 1800,
+    "max_parallel_downloads": 6,
+    "servers": [
+      "grpc-test.sandbox.googleapis.com",
+      "grpc-test4.sandbox.googleapis.com"
+    ],
+    "test_cases": [
+      "large_unary",
+      "empty_unary",
+      "ping_pong",
+      "empty_stream",
+      "client_streaming",
+      "server_streaming",
+      "cancel_after_begin",
+      "cancel_after_first_response",
+      "timeout_on_sleeping_server"
+    ],
+    "extra_repos": {
+      "dart": "https://github.com/grpc/grpc-dart.git"
+    },
+    "runtime_testcases_prefix_overrides": {
+      "csharpcoreclr": {
+        "lang": "csharp",
+        "replace_from": "csharp_",
+        "replace_to": "csharpcoreclr_"
+      }
+    },
+    "languages": {
+      "cxx": {
+        "repo": "https://github.com/grpc/grpc.git",
+        "default_runtimes": [
+          "cxx"
+        ],
+        "build_from_release_tag": true,
+        "root_env_var": "GRPC_ROOT",
+        "releases": {
+          "v1.0.1": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.1.4": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.2.5": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.3.9": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.4.2": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.6.6": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.7.2": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.8.0": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.9.1": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.10.1": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.11.1": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.12.0": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.13.0": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.14.1": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.15.0": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.16.0": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.17.1": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.18.0": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.19.0": {
+            "testcases_file": "cxx__v1.0.1"
+          },
+          "v1.20.0": {
+            "testcases_file": "cxx__v1.31.1"
+          },
+          "v1.21.4": {
+            "testcases_file": "cxx__v1.31.1"
+          },
+          "v1.22.0": {
+            "testcases_file": "cxx__v1.31.1"
+          },
+          "v1.22.1": {
+            "testcases_file": "cxx__v1.31.1"
+          },
+          "v1.23.0": {
+            "testcases_file": "cxx__v1.31.1"
+          },
+          "v1.24.0": {
+            "testcases_file": "cxx__v1.31.1"
+          },
+          "v1.25.0": {
+            "testcases_file": "cxx__v1.31.1"
+          },
+          "v1.26.0": {
+            "testcases_file": "cxx__v1.31.1"
+          },
+          "v1.27.3": {
+            "testcases_file": "cxx__v1.31.1"
+          },
+          "v1.30.0": {
+            "testcases_file": "cxx__v1.31.1"
+          },
+          "v1.31.1": {
+            "testcases_file": "cxx__v1.31.1"
+          },
+          "v1.32.0": {},
+          "v1.33.2": {},
+          "v1.34.0": {},
+          "v1.35.0": {},
+          "v1.36.3": {},
+          "v1.37.0": {},
+          "v1.38.0": {},
+          "v1.39.0": {},
+          "v1.41.1": {},
+          "v1.42.0": {},
+          "v1.43.0": {},
+          "v1.44.0": {},
+          "v1.46.2": {},
+          "v1.47.1": {},
+          "v1.48.3": {},
+          "v1.49.1": {},
+          "v1.52.0": {},
+          "v1.53.0": {},
+          "v1.54.0": {},
+          "v1.55.0": {},
+          "v1.56.0": {},
+          "v1.57.0": {},
+          "v1.58.0": {},
+          "v1.60.0": {},
+          "v1.61.0": {},
+          "v1.62.0": {},
+          "v1.63.1": {},
+          "v1.64.1": {},
+          "v1.65.0": {},
+          "v1.66.0": {},
+          "v1.67.0": {},
+          "v1.69.0": {},
+          "v1.70.0": {},
+          "v1.71.0": {},
+          "v1.72.0": {},
+          "v1.73.0": {},
+          "v1.74.0": {},
+          "v1.75.1": {},
+          "v1.76.0": {}
+        }
+      },
+      "go": {
+        "repo": "https://github.com/grpc/grpc-go.git",
+        "default_runtimes": [
+          "go1.x"
+        ],
+        "build_from_release_tag": false,
+        "root_env_var": "GRPC_GO_ROOT",
+        "releases": {
+          "v1.0.5": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.2.1": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.3.0": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.4.2": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.5.2": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.6.0": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.7.4": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.8.2": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.9.2": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.10.1": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.11.3": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.12.2": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.13.0": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.14.0": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.15.0": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.16.0": {
+            "runtimes": [
+              "go1.8"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.17.0": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.18.0": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.19.0": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.0.5"
+          },
+          "v1.20.0": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.21.3": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.22.3": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.23.1": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.24.0": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.25.0": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.26.0": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.27.1": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.28.0": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.29.0": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.30.0": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.31.1": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.32.0": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.33.1": {
+            "runtimes": [
+              "go1.11"
+            ],
+            "testcases_file": "go__v1.20.0"
+          },
+          "v1.34.0": {
+            "runtimes": [
+              "go1.11"
+            ]
+          },
+          "v1.35.0": {
+            "runtimes": [
+              "go1.11"
+            ]
+          },
+          "v1.36.0": {
+            "runtimes": [
+              "go1.11"
+            ]
+          },
+          "v1.37.0": {
+            "runtimes": [
+              "go1.11"
+            ]
+          },
+          "v1.38.1": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.39.1": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.40.0": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.41.0": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.42.0": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.43.0": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.44.0": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.45.0": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.46.0": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.47.0": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.48.0": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.49.0": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.50.1": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.51.0": {
+            "runtimes": [
+              "go1.16"
+            ]
+          },
+          "v1.52.3": {
+            "runtimes": [
+              "go1.19"
+            ]
+          },
+          "v1.53.0": {
+            "runtimes": [
+              "go1.19"
+            ]
+          },
+          "v1.54.1": {
+            "runtimes": [
+              "go1.19"
+            ]
+          },
+          "v1.55.0": {
+            "runtimes": [
+              "go1.19"
+            ]
+          },
+          "v1.56.3": {
+            "runtimes": [
+              "go1.19"
+            ]
+          },
+          "v1.57.2": {
+            "runtimes": [
+              "go1.19"
+            ]
+          },
+          "v1.58.3": {
+            "runtimes": [
+              "go1.19"
+            ]
+          },
+          "v1.59.0": {
+            "runtimes": [
+              "go1.19"
+            ]
+          },
+          "v1.60.1": {
+            "runtimes": [
+              "go1.19"
+            ]
+          },
+          "v1.61.2": {
+            "runtimes": [
+              "go1.19"
+            ]
+          },
+          "v1.62.2": {
+            "runtimes": [
+              "go1.19"
+            ]
+          },
+          "v1.63.3": {},
+          "v1.64.1": {},
+          "v1.65.1": {},
+          "v1.66.3": {},
+          "v1.67.3": {},
+          "v1.68.2": {},
+          "v1.69.4": {},
+          "v1.70.0": {},
+          "v1.71.3": {},
+          "v1.72.3": {},
+          "v1.73.1": {},
+          "v1.74.3": {},
+          "v1.75.1": {},
+          "v1.76.0": {}
+        }
+      },
+      "java": {
+        "repo": "https://github.com/grpc/grpc-java.git",
+        "default_runtimes": [
+          "java"
+        ],
+        "build_from_release_tag": false,
+        "root_env_var": "GRPC_JAVA_ROOT",
+        "releases": {
+          "v1.0.3": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.1.2": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.2.0": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.3.1": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.4.0": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.5.0": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.6.1": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.7.1": {
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.8.0": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.9.1": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.10.1": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.11.0": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.12.1": {
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.13.2": {
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.14.0": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.15.1": {
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.16.1": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.17.2": {
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.18.0": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.19.0": {
+            "runtimes": [
+              "java_oracle8"
+            ],
+            "testcases_file": "java__v1.0.3"
+          },
+          "v1.20.0": {
+            "runtimes": [
+              "java_oracle8"
+            ]
+          },
+          "v1.21.1": {},
+          "v1.22.2": {},
+          "v1.23.0": {},
+          "v1.24.0": {},
+          "v1.25.0": {},
+          "v1.26.1": {},
+          "v1.27.2": {},
+          "v1.28.1": {},
+          "v1.29.0": {},
+          "v1.30.2": {},
+          "v1.31.2": {},
+          "v1.32.3": {},
+          "v1.33.1": {},
+          "v1.34.1": {},
+          "v1.35.1": {},
+          "v1.36.3": {},
+          "v1.37.1": {},
+          "v1.38.1": {},
+          "v1.39.0": {},
+          "v1.40.2": {},
+          "v1.41.3": {},
+          "v1.42.3": {},
+          "v1.43.3": {},
+          "v1.44.2": {},
+          "v1.45.4": {},
+          "v1.46.1": {},
+          "v1.47.1": {},
+          "v1.48.2": {},
+          "v1.49.2": {},
+          "v1.50.3": {},
+          "v1.51.3": {},
+          "v1.52.1": {},
+          "v1.53.0": {},
+          "v1.54.0": {},
+          "v1.55.1": {},
+          "v1.56.0": {},
+          "v1.57.2": {},
+          "v1.58.0": {},
+          "v1.59.1": {},
+          "v1.60.1": {},
+          "v1.61.0": {},
+          "v1.63.2": {},
+          "v1.64.2": {},
+          "v1.65.1": {},
+          "v1.66.0": {},
+          "v1.67.1": {},
+          "v1.68.3": {},
+          "v1.69.1": {},
+          "v1.70.0": {},
+          "v1.71.0": {},
+          "v1.72.0": {},
+          "v1.73.0": {},
+          "v1.74.0": {},
+          "v1.75.0": {},
+          "v1.76.0": {}
+        }
+      },
+      "python": {
+        "repo": "https://github.com/grpc/grpc.git",
+        "default_runtimes": [
+          "python",
+          "pythonasyncio"
+        ],
+        "build_from_release_tag": true,
+        "root_env_var": "GRPC_ROOT",
+        "releases": {
+          "v1.0.x": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.0.x"
+          },
+          "v1.1.4": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.0.x"
+          },
+          "v1.2.5": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.0.x"
+          },
+          "v1.3.9": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.0.x"
+          },
+          "v1.4.2": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.0.x"
+          },
+          "v1.6.6": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.0.x"
+          },
+          "v1.7.2": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.0.x"
+          },
+          "v1.8.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.0.x"
+          },
+          "v1.9.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.0.x"
+          },
+          "v1.10.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.0.x"
+          },
+          "v1.11.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.11.1"
+          },
+          "v1.12.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.11.1"
+          },
+          "v1.13.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.11.1"
+          },
+          "v1.14.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.11.1"
+          },
+          "v1.15.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.11.1"
+          },
+          "v1.16.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.11.1"
+          },
+          "v1.17.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.11.1"
+          },
+          "v1.18.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.19.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.20.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.21.4": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.22.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.22.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.23.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.24.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.25.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.26.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.27.3": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.30.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.31.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.32.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.33.2": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.34.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.35.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.36.3": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.37.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.38.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.39.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.18.0"
+          },
+          "v1.41.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.41.1"
+          },
+          "v1.42.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.41.1"
+          },
+          "v1.43.2": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__v1.41.1"
+          },
+          "v1.44.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.46.2": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.47.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.48.3": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.49.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.52.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.53.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.54.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.55.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.56.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.57.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.58.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.60.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.61.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.62.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.63.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.64.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.65.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.66.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.67.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.69.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.70.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.71.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.72.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.73.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.74.0": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          },
+          "v1.75.1": {
+            "runtimes": [
+              "python"
+            ],
+            "testcases_file": "python__master"
+          }
+        }
+      },
+      "node": {
+        "repo": "https://github.com/grpc/grpc-node.git",
+        "default_runtimes": [
+          "node"
+        ],
+        "build_from_release_tag": false,
+        "root_env_var": "GRPC_NODE_ROOT",
+        "releases": {
+          "v1.0.1": {
+            "testcases_file": "node__v1.0.1"
+          },
+          "v1.1.4": {
+            "testcases_file": "node__v1.1.4"
+          },
+          "v1.2.5": {
+            "testcases_file": "node__v1.1.4"
+          },
+          "v1.3.9": {
+            "testcases_file": "node__v1.1.4"
+          },
+          "v1.4.2": {
+            "testcases_file": "node__v1.1.4"
+          },
+          "v1.6.6": {
+            "testcases_file": "node__v1.1.4"
+          },
+          "v1.8.4": {},
+          "v1.9.1": {},
+          "v1.10.0": {},
+          "v1.11.3": {},
+          "v1.12.4": {}
+        }
+      },
+      "ruby": {
+        "repo": "https://github.com/grpc/grpc.git",
+        "default_runtimes": [
+          "ruby"
+        ],
+        "build_from_release_tag": true,
+        "root_env_var": "GRPC_ROOT",
+        "releases": {
+          "v1.0.1": {
+            "patch": [
+              "tools/dockerfile/interoptest/grpc_interop_ruby/Dockerfile",
+              "tools/dockerfile/interoptest/grpc_interop_ruby/build_interop.sh"
+            ],
+            "testcases_file": "ruby__v1.0.1"
+          },
+          "v1.1.4": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.2.5": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.3.9": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.4.2": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.6.6": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.7.2": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.8.0": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.9.1": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.10.1": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.11.1": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.12.0": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.13.0": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.14.1": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.15.0": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.16.0": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.17.1": {
+            "testcases_file": "ruby__v1.1.4"
+          },
+          "v1.18.0": {
+            "patch": [
+              "tools/dockerfile/interoptest/grpc_interop_ruby/build_interop.sh"
+            ]
+          },
+          "v1.19.0": {},
+          "v1.20.0": {},
+          "v1.21.4": {},
+          "v1.22.0": {},
+          "v1.22.1": {},
+          "v1.23.0": {},
+          "v1.24.0": {},
+          "v1.25.0": {},
+          "v1.26.0": {},
+          "v1.27.3": {},
+          "v1.30.0": {},
+          "v1.31.1": {},
+          "v1.32.0": {},
+          "v1.33.2": {},
+          "v1.34.0": {},
+          "v1.35.0": {},
+          "v1.36.3": {},
+          "v1.37.0": {},
+          "v1.38.0": {},
+          "v1.39.0": {},
+          "v1.41.1": {},
+          "v1.42.0": {},
+          "v1.43.0": {},
+          "v1.44.0": {},
+          "v1.46.2": {},
+          "v1.47.1": {},
+          "v1.48.3": {},
+          "v1.49.1": {},
+          "v1.52.0": {},
+          "v1.53.0": {},
+          "v1.54.0": {},
+          "v1.55.0": {},
+          "v1.56.0": {},
+          "v1.57.0": {},
+          "v1.58.0": {},
+          "v1.60.0": {},
+          "v1.61.0": {},
+          "v1.62.0": {},
+          "v1.63.0": {},
+          "v1.64.0": {},
+          "v1.65.0": {},
+          "v1.66.0": {},
+          "v1.67.0": {},
+          "v1.69.0": {},
+          "v1.70.0": {},
+          "v1.71.0": {},
+          "v1.72.0": {},
+          "v1.73.0": {},
+          "v1.74.0": {},
+          "v1.75.1": {},
+          "v1.76.0": {}
+        }
+      },
+      "php": {
+        "repo": "https://github.com/grpc/grpc.git",
+        "default_runtimes": [
+          "php7"
+        ],
+        "build_from_release_tag": true,
+        "root_env_var": "GRPC_ROOT",
+        "releases": {
+          "v1.0.1": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.1.4": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.2.5": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.3.9": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.4.2": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.6.6": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.7.2": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.8.0": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.9.1": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.10.1": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.11.1": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.12.0": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.13.0": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.14.1": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.15.0": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.16.0": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.17.1": {
+            "testcases_file": "php__v1.0.1"
+          },
+          "v1.18.0": {},
+          "v1.21.4": {},
+          "v1.22.0": {},
+          "v1.22.1": {},
+          "v1.23.0": {},
+          "v1.24.0": {},
+          "v1.25.0": {},
+          "v1.26.0": {},
+          "v1.27.3": {},
+          "v1.30.0": {},
+          "v1.31.1": {},
+          "v1.32.0": {},
+          "v1.33.2": {},
+          "v1.34.0": {},
+          "v1.35.0": {},
+          "v1.36.3": {},
+          "v1.37.0": {},
+          "v1.38.0": {},
+          "v1.39.0": {},
+          "v1.41.1": {},
+          "v1.42.0": {},
+          "v1.43.0": {},
+          "v1.44.0": {},
+          "v1.46.2": {},
+          "v1.47.1": {},
+          "v1.48.3": {},
+          "v1.49.1": {},
+          "v1.52.0": {},
+          "v1.53.0": {},
+          "v1.54.0": {},
+          "v1.55.0": {},
+          "v1.56.0": {},
+          "v1.57.0": {},
+          "v1.58.0": {},
+          "v1.60.0": {},
+          "v1.61.0": {},
+          "v1.62.0": {},
+          "v1.63.0": {},
+          "v1.64.0": {},
+          "v1.65.0": {},
+          "v1.66.0": {},
+          "v1.67.0": {},
+          "v1.70.0": {},
+          "v1.71.0": {},
+          "v1.72.0": {},
+          "v1.73.0": {},
+          "v1.74.0": {},
+          "v1.75.1": {},
+          "v1.76.0": {}
+        }
+      },
+      "csharp": {
+        "repo": "https://github.com/grpc/grpc.git",
+        "default_runtimes": [
+          "csharp",
+          "csharpcoreclr"
+        ],
+        "build_from_release_tag": true,
+        "root_env_var": "GRPC_ROOT",
+        "releases": {
+          "v1.0.1": {
+            "patch": [
+              "tools/dockerfile/interoptest/grpc_interop_csharp/Dockerfile",
+              "tools/dockerfile/interoptest/grpc_interop_csharpcoreclr/Dockerfile"
+            ],
+            "testcases_file": "csharp__v1.1.4"
+          },
+          "v1.1.4": {
+            "testcases_file": "csharp__v1.1.4"
+          },
+          "v1.2.5": {
+            "testcases_file": "csharp__v1.1.4"
+          },
+          "v1.3.9": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.4.2": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.6.6": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.7.2": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.8.0": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.9.1": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.10.1": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.11.1": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.12.0": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.13.0": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.14.1": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.15.0": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.16.0": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.17.1": {
+            "testcases_file": "csharp__v1.3.9"
+          },
+          "v1.18.0": {
+            "testcases_file": "csharp__v1.18.0"
+          },
+          "v1.19.0": {
+            "testcases_file": "csharp__v1.18.0"
+          },
+          "v1.20.0": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.21.4": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.22.0": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.22.1": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.23.0": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.24.0": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.25.0": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.26.0": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.27.3": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.30.0": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.31.1": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.32.0": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.33.2": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.34.0": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.35.0": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.36.3": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.37.0": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.38.1": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.39.1": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.41.1": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.42.0": {
+            "testcases_file": "csharp__v1.20.0"
+          },
+          "v1.43.0": {},
+          "v1.44.0": {},
+          "v1.46.2": {}
+        }
+      }
+    },
+    "runtimes": {
+      "cxx": {
+        "base_name": "grpc_interop_cxx",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_cxx.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_cxx",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_cxx/build_interop.sh"
+      },
+      "go1.8": {
+        "base_name": "grpc_interop_go1.8",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_go1.8.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_go1.8",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_go1.8/build_interop.sh"
+      },
+      "go1.11": {
+        "base_name": "grpc_interop_go1.11",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_go1.11.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_go1.11",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_go1.11/build_interop.sh"
+      },
+      "go1.16": {
+        "base_name": "grpc_interop_go1.16",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_go1.16.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_go1.16",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_go1.16/build_interop.sh"
+      },
+      "go1.19": {
+        "base_name": "grpc_interop_go1.19",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_go1.19.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_go1.19",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_go1.19/build_interop.sh"
+      },
+      "go1.x": {
+        "base_name": "grpc_interop_go1.x",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_go1.x.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_go1.x",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_go1.x/build_interop.sh"
+      },
+      "java": {
+        "base_name": "grpc_interop_java",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_java.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_java",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_java/build_interop.sh"
+      },
+      "java_oracle8": {
+        "base_name": "grpc_interop_java_oracle8",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_java.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_java",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_java/build_interop.sh"
+      },
+      "python": {
+        "base_name": "grpc_interop_python",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_python.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_python",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_python/build_interop.sh"
+      },
+      "pythonasyncio": {
+        "base_name": "grpc_interop_pythonasyncio",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_pythonasyncio.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_pythonasyncio",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_pythonasyncio/build_interop.sh"
+      },
+      "node": {
+        "base_name": "grpc_interop_node",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_node.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_node",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_node/build_interop.sh"
+      },
+      "ruby": {
+        "base_name": "grpc_interop_ruby",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_ruby.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_ruby",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_ruby/build_interop.sh"
+      },
+      "php7": {
+        "base_name": "grpc_interop_php7",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_php7.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_php7",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_php7/build_interop.sh"
+      },
+      "csharp": {
+        "base_name": "grpc_interop_csharp",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_aspnetcore.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_aspnetcore",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_aspnetcore/build_interop.sh"
+      },
+      "csharpcoreclr": {
+        "base_name": "grpc_interop_csharpcoreclr",
+        "current_version_file": "tools/dockerfile/interoptest/grpc_interop_aspnetcore.current_version",
+        "dockerfile_dir": "tools/dockerfile/interoptest/grpc_interop_aspnetcore",
+        "build_script": "tools/dockerfile/interoptest/grpc_interop_aspnetcore/build_interop.sh"
+      }
+    },
+    "testcase_profiles": {
+      "csharp__master": {
+        "default_image": "grpc_interop_csharp:556faec6-de63-4493-9779-2edf51d1ef28",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45",
+        "inner_command_template": "mono Grpc.IntegrationTesting.Client.exe --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true"
+      },
+      "csharp__v1.1.4": {
+        "default_image": "grpc_interop_csharp:a95229ca-d387-4127-ad48-69a7464e23b8",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug",
+        "inner_command_template": "mono Grpc.IntegrationTesting.Client.exe --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}"
+      },
+      "csharp__v1.18.0": {
+        "default_image": "grpc_interop_csharp:71b05977-476b-4e57-9752-dd211c9e3741",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45",
+        "inner_command_template": "mono Grpc.IntegrationTesting.Client.exe --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true"
+      },
+      "csharp__v1.20.0": {
+        "default_image": "grpc_interop_csharp:9296f21a-f657-4bb0-82a7-24fc527abcbd",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45",
+        "inner_command_template": "mono Grpc.IntegrationTesting.Client.exe --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true"
+      },
+      "csharp__v1.3.9": {
+        "default_image": "grpc_interop_csharp:a95229ca-d387-4127-ad48-69a7464e23b8",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45",
+        "inner_command_template": "mono Grpc.IntegrationTesting.Client.exe --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}"
+      },
+      "csharpcoreclr__master": {
+        "default_image": "grpc_interop_csharpcoreclr:69a5b092-dccd-43a6-82dd-61c100d509f5",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp3.1",
+        "inner_command_template": "dotnet exec Grpc.IntegrationTesting.Client.dll --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true"
+      },
+      "csharpcoreclr__v1.1.4": {
+        "default_image": "grpc_interop_csharpcoreclr:c7fbed09-e4c1-4aab-8dd9-1285b2c9598e",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp1.0",
+        "inner_command_template": "dotnet exec Grpc.IntegrationTesting.Client.dll --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}"
+      },
+      "csharpcoreclr__v1.18.0": {
+        "default_image": "grpc_interop_csharpcoreclr:bae17a7e-5450-4781-8982-e82cb89db6dd",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp1.1",
+        "inner_command_template": "dotnet exec Grpc.IntegrationTesting.Client.dll --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true"
+      },
+      "csharpcoreclr__v1.20.0": {
+        "default_image": "grpc_interop_csharpcoreclr:33395965-11d7-4b12-bcd6-a272d4015207",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp2.1",
+        "inner_command_template": "dotnet exec Grpc.IntegrationTesting.Client.dll --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true"
+      },
+      "csharpcoreclr__v1.3.9": {
+        "default_image": "grpc_interop_csharpcoreclr:c7fbed09-e4c1-4aab-8dd9-1285b2c9598e",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp1.0",
+        "inner_command_template": "dotnet exec Grpc.IntegrationTesting.Client.dll --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}"
+      },
+      "cxx__master": {
+        "default_image": "grpc_interop_cxx:eadcc0fd-5683-411b-aed5-084fbb3159ee",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "cmake/build/interop_client --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true"
+      },
+      "cxx__v1.0.1": {
+        "default_image": "grpc_interop_cxx:78de6f80-524d-4bc9-bfb2-f00c24ceafed",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "bins/opt/interop_client --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}"
+      },
+      "cxx__v1.31.1": {
+        "default_image": "grpc_interop_cxx:f5a2f91d-342a-4bc8-a5ca-eb113dd3a8a2",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "bins/opt/interop_client --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true"
+      },
+      "go__master": {
+        "default_image": "grpc_interop_go:fea70d36-60ef-4497-ab63-5426093a34b2",
+        "workdir": "/go/src/google.golang.org/grpc/interop/client",
+        "inner_command_template": "go run client.go --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true",
+        "env": {
+          "GO111MODULE": "on"
+        }
+      },
+      "go__v1.0.5": {
+        "default_image": "grpc_interop_go:dd8fbf3a-4964-4387-9997-5dadeea09835",
+        "workdir": "/go/src/google.golang.org/grpc/interop/client",
+        "inner_command_template": "go run client.go --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}"
+      },
+      "go__v1.20.0": {
+        "default_image": "grpc_interop_go:45617187-1a75-4f2f-b7af-c602d882bbc0",
+        "workdir": "/go/src/google.golang.org/grpc/interop/client",
+        "inner_command_template": "go run client.go --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true"
+      },
+      "java__master": {
+        "default_image": "grpc_interop_java:564ef0d0-f4d8-4611-88a9-bb6a99bf68a8",
+        "workdir": "/var/local/git/grpc/../grpc-java",
+        "inner_command_template": "./run-test-client.sh --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true"
+      },
+      "java__v1.0.3": {
+        "default_image": "grpc_interop_java:a764b50c-1788-4387-9b9e-5cfa93927006",
+        "workdir": "/var/local/git/grpc/../grpc-java",
+        "inner_command_template": "./run-test-client.sh --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}"
+      },
+      "node__master": {
+        "default_image": "grpc_interop_node:1415ecbf-5d0f-423e-8c2c-e0cb6d154e73",
+        "workdir": "/var/local/git/grpc-node",
+        "inner_command_template": "packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh node --require ./test/fixtures/native_native test/interop/interop_client.js --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}"
+      },
+      "node__v1.0.1": {
+        "default_image": "grpc_interop_node:a53aa5e3-b548-4566-b5a8-6d15c1315b32",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "node src/node/interop/interop_client.js --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}",
+        "bash_login": true,
+        "container_names": [
+          "interop_client_node_00c688f2-57da-4023-89f3-46b1f7b5869f",
+          "interop_client_node_d86705d8-14ea-4024-90b6-de74d6e8d19c",
+          "interop_client_node_ebaafacd-1d82-4a75-bea1-a5c64e01fcaf",
+          "interop_client_node_5125241a-fbf6-4c1c-895b-026a5a41f02f",
+          "interop_client_node_3d5e5b82-7205-4eba-b775-8122f05a4760",
+          "interop_client_node_16fa0b49-2083-4932-8f26-79cfdffec940",
+          "interop_client_node_23cee670-2d8d-4f5c-8893-c3c43da8b03a",
+          "interop_client_node_7b6a9454-e3b6-4993-b542-468e268930aa",
+          "interop_client_node_5a7109ed-c065-4b62-98f4-b3ed8f385762",
+          "interop_client_node_1e0ba8dd-4dc1-431b-b202-529e7ace5d1d",
+          "interop_client_node_649de56a-e722-4a59-b265-e9c0e871f068",
+          "interop_client_node_8be512a2-5e1c-4858-8cfc-82f99b678b76",
+          "interop_client_node_d19b6333-e528-48b5-8421-2ae3f7ce9dab",
+          "interop_client_node_4749c80a-21c5-4d81-9df5-3c46ba6480cd",
+          "interop_client_node_b7bee545-4857-4269-a1f2-9553dfc7e4b8",
+          "interop_client_node_4e96db87-6f48-426d-a7f0-97f3a5b6b3f4",
+          "interop_client_node_31a1d58c-f8bf-460a-af60-28969ecaaf80",
+          "interop_client_node_ce64b147-bcfa-44b2-a2f7-4a485380ce30"
+        ]
+      },
+      "node__v1.1.4": {
+        "default_image": "grpc_interop_node:1415ecbf-5d0f-423e-8c2c-e0cb6d154e73",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "tools/run_tests/interop/with_nvm.sh node src/node/interop/interop_client.js --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}"
+      },
+      "php__master": {
+        "default_image": "grpc_interop_php:e00a3b45-27f0-4143-8c23-128cb4ffc46a",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "src/php/bin/interop_client.sh --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true"
+      },
+      "php__v1.0.1": {
+        "default_image": "grpc_interop_php:b290f404-9940-4968-8fc2-19f5291c8eb7",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "src/php/bin/interop_client.sh --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}"
+      },
+      "python__master": {
+        "default_image": "grpc_interop_python:0de8fc68-43f4-4fa0-8738-1228de6ffe8c",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "py39/bin/python src/python/grpcio_tests/setup.py run_interop --client --args=\\\"--server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true\\\"",
+        "env": {
+          "PYTHONPATH": "/var/local/git/grpc/src/python/gens",
+          "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt"
+        }
+      },
+      "python__v1.0.x": {
+        "default_image": "grpc_interop_python:797ca293-94e8-48d4-92e9-a4d52fcfcca9",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "py27/bin/python src/python/grpcio_tests/setup.py run_interop --client --args=\\\"--server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}\\\"",
+        "env": {
+          "PYTHONPATH": "/var/local/git/grpc/src/python/gens",
+          "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt"
+        }
+      },
+      "python__v1.11.1": {
+        "default_image": "grpc_interop_python:797ca293-94e8-48d4-92e9-a4d52fcfcca9",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "py27_native/bin/python src/python/grpcio_tests/setup.py run_interop --client --args=\\\"--server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}\\\"",
+        "env": {
+          "PYTHONPATH": "/var/local/git/grpc/src/python/gens",
+          "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt"
+        }
+      },
+      "python__v1.18.0": {
+        "default_image": "grpc_interop_python:8f586cb2-054e-4653-91a4-3ffdc94e71fc",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "py37_native/bin/python src/python/grpcio_tests/setup.py run_interop --client --args=\\\"--server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true\\\"",
+        "env": {
+          "PYTHONPATH": "/var/local/git/grpc/src/python/gens",
+          "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt"
+        }
+      },
+      "python__v1.41.1": {
+        "default_image": "grpc_interop_python:0de8fc68-43f4-4fa0-8738-1228de6ffe8c",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "py39_native/bin/python src/python/grpcio_tests/setup.py run_interop --client --args=\\\"--server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true\\\"",
+        "env": {
+          "PYTHONPATH": "/var/local/git/grpc/src/python/gens",
+          "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt"
+        }
+      },
+      "ruby__master": {
+        "default_image": "grpc_interop_ruby:e60da8f6-d7e0-47d3-8bfe-330ce76077b4",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/client.rb --server_host={server_host} --server_port=443 --test_case={test_case} --use_tls=true"
+      },
+      "ruby__v1.0.1": {
+        "default_image": "grpc_interop_ruby:6bd1f0eb-51a4-4ad8-861c-1cbd7a929f33",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "source /usr/local/rvm/scripts/rvm && ruby src/ruby/pb/test/client.rb --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}"
+      },
+      "ruby__v1.1.4": {
+        "default_image": "grpc_interop_ruby:6bd1f0eb-51a4-4ad8-861c-1cbd7a929f33",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": "tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/client.rb --server_host={server_host} --server_host_override={server_host} --server_port=443 --use_tls=true --test_case={test_case}"
+      }
+    }
+  },
+  "http2_badserver_client_order": [
+    "java",
+    "go",
+    "python",
+    "c++"
+  ],
+  "alts_language_order": [
+    "java",
+    "go",
+    "c++",
+    "python"
+  ]
+}
