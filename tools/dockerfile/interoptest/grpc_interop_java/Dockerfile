@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM debian:bullseye
+ARG BASE_IMAGE=base
+FROM debian:bullseye AS base
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends openjdk-11-jdk-headless && \
@@ -22,4 +23,25 @@ WORKDIR /var/local/git/grpc-java/
 
 # Define the default command.
 CMD ["bash"]
+
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+LABEL release="${RELEASE_LABEL}"
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+RUN --mount=type=bind,from=grpc_java,target=/var/local/jenkins/grpc-java \
+  cp -r /var/local/jenkins/grpc-java /tmp/grpc-java \
+  && export GRADLE_OPTS="-Dorg.gradle.jvmargs='-Xmx1g'" \
+  && cd /tmp/grpc-java \
+  && (./gradlew --no-daemon :grpc-interop-testing:installDist -PskipCodegen=true -PskipAndroid=true || \
+      ./gradlew --no-daemon :grpc-interop-testing:installDist -PskipCodegen=true -PskipAndroid=true) \
+  && mkdir -p /var/local/git/grpc-java/ \
+  && cp -r --parents -t /var/local/git/grpc-java/ \
+      interop-testing/build/install/ \
+      run-test-client.sh \
+      run-test-server.sh \
+  && rm -rf /tmp/grpc-java "$HOME/.gradle" \
+  && mkdir -p /var/local/grpc_java_logging \
+  && printf "handlers = java.util.logging.ConsoleHandler\njava.util.logging.ConsoleHandler.level = ALL\n.level = FINE\nio.grpc.netty.NettyClientHandler = ALL\nio.grpc.netty.NettyServerHandler = ALL\n" > /var/local/grpc_java_logging/logconf.txt
 
