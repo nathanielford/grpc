@@ -15,6 +15,7 @@
 """Verification and adversarial regression test suite for gRPC interop harness."""
 
 import ast
+import copy
 import glob
 import io
 import json
@@ -46,17 +47,21 @@ from tools.interop import runner  # noqa: E402
 from tools.run_tests.python_utils import dockerjob  # noqa: E402
 
 
+def _git_show_master(rel_path):
+    for ref in ("master", "origin/master"):
+        res = subprocess.run(
+            ["git", "-C", _REPO_ROOT, "show", f"{ref}:{rel_path}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if res.returncode == 0:
+            return res.stdout
+    raise RuntimeError(f"Could not git show {rel_path} from master or origin/master")
+
+
 def _load_master_run_interop_tests():
-    src = subprocess.check_output(
-        [
-            "git",
-            "-C",
-            _REPO_ROOT,
-            "show",
-            "master:tools/run_tests/run_interop_tests.py",
-        ],
-        text=True,
-    )
+    src = _git_show_master("tools/run_tests/run_interop_tests.py")
     cutoff = src.index("args = argp.parse_args()")
     src = src[:cutoff]
     ns = {
@@ -70,16 +75,7 @@ def _load_master_run_interop_tests():
 
 
 def _load_master_client_matrix():
-    src = subprocess.check_output(
-        [
-            "git",
-            "-C",
-            _REPO_ROOT,
-            "show",
-            "master:tools/interop_matrix/client_matrix.py",
-        ],
-        text=True,
-    )
+    src = _git_show_master("tools/interop_matrix/client_matrix.py")
     ns = {
         "__file__": os.path.join(
             _REPO_ROOT, "tools/interop_matrix/client_matrix.py"
@@ -814,6 +810,97 @@ class InteropHarnessVerificationTest(unittest.TestCase):
             self.assertIn("--build-arg BASE_NAME=grpc_interop_csharp", out_legacy)
         finally:
             shutil.rmtree(temp_root, ignore_errors=True)
+
+    def test_18_config_schema_validation_and_sync(self):
+        """Verify config.schema.json and config.json (<350 lines) are in sync and reject invalid mutations."""
+        cfg_path = os.path.join(_REPO_ROOT, "tools/interop/config.json")
+        schema_path = os.path.join(
+            _REPO_ROOT, "tools/interop/config.schema.json"
+        )
+        self.assertTrue(os.path.exists(schema_path))
+
+        with open(cfg_path) as f:
+            cfg_lines = f.readlines()
+            cfg = json.loads("".join(cfg_lines))
+        with open(schema_path) as f:
+            schema = json.load(f)
+
+        self.assertLess(
+            len(cfg_lines),
+            350,
+            f"config.json should be < 350 lines, got {len(cfg_lines)}",
+        )
+        self.assertTrue(runner.validate_config(cfg, schema))
+        self.assertEqual(
+            set(schema["$defs"]["capability"]["enum"]),
+            set(cfg["capabilities"]),
+        )
+        self.assertEqual(
+            set(schema["$defs"]["capability"]["enum"]),
+            set(c.value for c in runner.Capability),
+        )
+
+        # 1. Missing required top-level key
+        bad_missing = copy.deepcopy(cfg)
+        del bad_missing["language_defaults"]
+        with self.assertRaises(ValueError):
+            runner.validate_config(bad_missing, schema)
+
+        # 2. Unknown top-level property (additionalProperties: false)
+        bad_top_prop = copy.deepcopy(cfg)
+        bad_top_prop["unexpected_field"] = 123
+        with self.assertRaises(ValueError):
+            runner.validate_config(bad_top_prop, schema)
+
+        # 3. Unknown language property (additionalProperties: false)
+        bad_lang_prop = copy.deepcopy(cfg)
+        bad_lang_prop["languages"]["go"]["unknown_flag"] = True
+        with self.assertRaises(ValueError):
+            runner.validate_config(bad_lang_prop, schema)
+
+        # 4. Invalid capability enum value
+        bad_cap = copy.deepcopy(cfg)
+        bad_cap["languages"]["go"]["add_client_capabilities"].append(
+            "NON_EXISTENT_CAPABILITY"
+        )
+        with self.assertRaises(ValueError):
+            runner.validate_config(bad_cap, schema)
+
+        # 5. Overlapping add/remove capabilities
+        bad_overlap = copy.deepcopy(cfg)
+        bad_overlap["languages"]["dart"]["add_client_capabilities"].append(
+            "SPECIAL_STATUS_MESSAGE"
+        )
+        with self.assertRaises(ValueError):
+            runner.validate_config(bad_overlap, schema)
+
+        # 6. Wrong type for command_spec (oneOf violation)
+        bad_cmd = copy.deepcopy(cfg)
+        bad_cmd["languages"]["go"]["client_cmd"] = 42
+        with self.assertRaises(ValueError):
+            runner.validate_config(bad_cmd, schema)
+
+        # 7. Invalid args_mode enum in command_spec
+        bad_mode = copy.deepcopy(cfg)
+        bad_mode["languages"]["python"]["client_cmd"]["args_mode"] = "bogus"
+        with self.assertRaises(ValueError):
+            runner.validate_config(bad_mode, schema)
+
+        # 8. Invalid matrix release range (reversed endpoints)
+        bad_range = copy.deepcopy(cfg)
+        bad_range["matrix"]["languages"]["cxx"]["overrides"][
+            "v1.19.0..v1.0.1"
+        ] = {"testcases_file": "cxx__v1.0.1"}
+        with self.assertRaises(ValueError):
+            runner.validate_config(bad_range, schema)
+
+        # 9. Unknown matrix testcases_file reference
+        bad_profile = copy.deepcopy(cfg)
+        bad_profile["matrix"]["languages"]["cxx"]["overrides"][
+            "v1.0.1..v1.19.0"
+        ]["testcases_file"] = "non_existent_profile"
+        with self.assertRaises(ValueError):
+            runner.validate_config(bad_profile, schema)
 
 
 if __name__ == "__main__":
