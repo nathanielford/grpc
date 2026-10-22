@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM debian:11
+ARG BASE_IMAGE=base
+FROM debian:11 AS base
 
 #=================
 # Basic C core dependencies
@@ -118,3 +119,31 @@ RUN mkdir /var/local/jenkins
 # Define the default command.
 CMD ["bash"]
 
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+ARG GRPC_BUILD_ENABLE_CCACHE=""
+ARG CCACHE_SECONDARY_STORAGE=""
+LABEL release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.client_cmd="[\"cmake/build/interop_client\"]"
+LABEL io.grpc.interop.server_cmd="[\"cmake/build/interop_server\"]"
+LABEL io.grpc.interop.http2_client_cmd="[\"cmake/build/http2_client\"]"
+LABEL io.grpc.interop.workdir="/var/local/git/grpc"
+LABEL io.grpc.interop.env="{}"
+LABEL io.grpc.interop.capabilities="core_interop,timeout_on_sleeping_server,tls"
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+COPY --from=grpc . /var/local/git/grpc
+RUN mkdir -p /usr/local/share/grpc \
+  && cp /var/local/git/grpc/etc/roots.pem /usr/local/share/grpc/roots.pem \
+  && mkdir -p /var/local/git/grpc/cmake/build \
+  && cd /var/local/git/grpc/cmake/build \
+  && cmake -DgRPC_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 ../.. \
+  && make interop_client interop_server -j4 \
+  && make http2_client -j4
+RUN mkdir -p /interop \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc\nif [ -x cmake/build/interop_client ]; then\n  exec cmake/build/interop_client "$@"\nfi\nexec bins/opt/interop_client "$@"\n' > /interop/client \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc\nif [ -x cmake/build/interop_server ]; then\n  exec cmake/build/interop_server "$@"\nfi\nexec bins/opt/interop_server "$@"\n' > /interop/server \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc\nif [ -x cmake/build/http2_client ]; then\n  exec cmake/build/http2_client "$@"\nfi\nexec bins/opt/http2_client "$@"\n' > /interop/http2_client \
+  && chmod +x /interop/client /interop/server /interop/http2_client

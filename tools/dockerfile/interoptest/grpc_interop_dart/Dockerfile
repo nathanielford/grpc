@@ -14,7 +14,28 @@
 
 # Updated: 2025-11-18
 
-FROM dart:3.10.0-sdk
+ARG BASE_IMAGE=base
+FROM dart:3.10.0-sdk AS base
 
 # Define the default command.
 CMD ["bash"]
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+LABEL release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.client_cmd="[\"dart\", \"bin/client.dart\"]"
+LABEL io.grpc.interop.server_cmd="[\"dart\", \"bin/server.dart\"]"
+LABEL io.grpc.interop.http2_client_cmd="[]"
+LABEL io.grpc.interop.workdir="/var/local/git/grpc/../grpc-dart/interop"
+LABEL io.grpc.interop.env="{}"
+LABEL io.grpc.interop.capabilities="core_interop,timeout_on_sleeping_server,tls"
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+COPY --from=grpc_dart . /var/local/git/grpc-dart
+RUN cd /var/local/git/grpc-dart/interop \
+  && (/usr/lib/dart/bin/dart pub get --verbose || /usr/lib/dart/bin/dart pub get --verbose)
+RUN mkdir -p /interop \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc-dart/interop\nexec dart bin/client.dart "$@"\n' > /interop/client \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc-dart/interop\nexec dart bin/server.dart "$@"\n' > /interop/server \
+  && chmod +x /interop/client /interop/server

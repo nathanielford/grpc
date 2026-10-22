@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM debian:11
+ARG BASE_IMAGE=base
+FROM debian:11 AS base
 
 #=================
 # Basic C core dependencies
@@ -94,3 +95,26 @@ RUN curl -sSL -o ccache.tar.gz https://github.com/ccache/ccache/releases/downloa
     && cd ../.. \
     && rm -rf ccache-4.11.3 ccache.tar.gz
 
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+ARG GRPC_BUILD_ENABLE_CCACHE=""
+ARG CCACHE_SECONDARY_STORAGE=""
+LABEL release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.client_cmd="[\"py39/bin/python\", \"src/python/grpcio_tests/setup.py\", \"run_interop\", \"--use-asyncio\", \"--client\", \"--args=\\\"{args}\\\"\"]"
+LABEL io.grpc.interop.server_cmd="[\"py39/bin/python\", \"src/python/grpcio_tests/setup.py\", \"run_interop\", \"--use-asyncio\", \"--server\", \"--args=\\\"{args}\\\"\"]"
+LABEL io.grpc.interop.http2_client_cmd="[\"py39/bin/python\", \"src/python/grpcio_tests/tests/http2/negative_http2_client.py\"]"
+LABEL io.grpc.interop.workdir="/var/local/git/grpc"
+LABEL io.grpc.interop.env="{\"PYTHONPATH\": \"/var/local/git/grpc/src/python/gens\", \"LD_LIBRARY_PATH\": \"/var/local/git/grpc/libs/opt\"}"
+LABEL io.grpc.interop.capabilities="core_interop,timeout_on_sleeping_server,tls"
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+COPY --from=grpc . /var/local/git/grpc
+RUN cd /var/local/git/grpc \
+  && tools/run_tests/run_tests.py -l python --compiler python3.9 -c opt --build_only
+RUN mkdir -p /interop \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc\nexport LD_LIBRARY_PATH="/var/local/git/grpc/libs/opt"\nexport PYTHONPATH="/var/local/git/grpc/src/python/gens"\nexec py39/bin/python src/python/grpcio_tests/setup.py run_interop --use-asyncio --client --args="$*"\n' > /interop/client \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc\nexport LD_LIBRARY_PATH="/var/local/git/grpc/libs/opt"\nexport PYTHONPATH="/var/local/git/grpc/src/python/gens"\nexec py39/bin/python src/python/grpcio_tests/setup.py run_interop --use-asyncio --server --args="$*"\n' > /interop/server \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc\nexport LD_LIBRARY_PATH="/var/local/git/grpc/libs/opt"\nexport PYTHONPATH="/var/local/git/grpc/src/python/gens"\nexec py39/bin/python src/python/grpcio_tests/tests/http2/negative_http2_client.py "$@"\n' > /interop/http2_client \
+  && chmod +x /interop/client /interop/server /interop/http2_client

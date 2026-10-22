@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
+ARG BASE_IMAGE=base
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
 
 # needed by get-dotnet.sh script
 RUN apt-get update && apt-get install -y curl git jq && apt-get clean
@@ -22,3 +23,26 @@ RUN git config --global protocol.file.allow always
 
 # Define the default command.
 CMD ["bash"]
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+LABEL release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.client_cmd="[\"dotnet\", \"exec\", \"InteropTestsClient.dll\"]"
+LABEL io.grpc.interop.server_cmd="[\"dotnet\", \"exec\", \"InteropTestsWebsite.dll\"]"
+LABEL io.grpc.interop.http2_client_cmd="[]"
+LABEL io.grpc.interop.workdir="{\"client\": \"/var/local/git/grpc/../grpc-dotnet/output/InteropTestsClient\", \"http2\": \"/var/local/git/grpc\", \"server\": \"/var/local/git/grpc/../grpc-dotnet/output/InteropTestsWebsite\"}"
+LABEL io.grpc.interop.env="{}"
+LABEL io.grpc.interop.capabilities="core_interop,timeout_on_sleeping_server,tls"
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+COPY --from=grpc_dotnet . /var/local/git/grpc-dotnet
+RUN cd /var/local/git/grpc-dotnet \
+  && ./build/get-dotnet.sh \
+  && if [ -f "$(pwd)/.dotnet/dotnet" ]; then ln -sf "$(pwd)/.dotnet/dotnet" /usr/local/bin/dotnet; fi \
+  && dotnet build --configuration Debug --output ./output/InteropTestsWebsite testassets/InteropTestsWebsite/InteropTestsWebsite.csproj -p:RepositoryUrl=https://github.com/grpc/grpc-dotnet.git -p:LatestFramework=true \
+  && dotnet build --configuration Debug --output ./output/InteropTestsClient testassets/InteropTestsClient/InteropTestsClient.csproj -p:RepositoryUrl=https://github.com/grpc/grpc-dotnet.git -p:LatestFramework=true
+RUN mkdir -p /interop \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc-dotnet/output/InteropTestsClient\nexec dotnet exec InteropTestsClient.dll "$@"\n' > /interop/client \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc-dotnet/output/InteropTestsWebsite\nexec dotnet exec InteropTestsWebsite.dll "$@"\n' > /interop/server \
+  && chmod +x /interop/client /interop/server

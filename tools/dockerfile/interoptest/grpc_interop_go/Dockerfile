@@ -16,7 +16,8 @@
 # the following comment is a simple way to re-build the image with a new Go
 # version.
 # latest points to 1.23.1 at the time of building.
-FROM golang:latest
+ARG BASE_IMAGE=base
+FROM golang:latest AS base
 
 # Using login shell removes Go from path, so we add it.
 RUN ln -s /usr/local/go/bin/go /usr/local/bin
@@ -32,3 +33,26 @@ RUN git config --global protocol.file.allow always
 # Define the default command.
 CMD ["bash"]
 
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+LABEL release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.client_cmd="[\"go\", \"run\", \"client.go\"]"
+LABEL io.grpc.interop.server_cmd="[\"go\", \"run\", \"server.go\"]"
+LABEL io.grpc.interop.http2_client_cmd="[\"go\", \"run\", \"negative_http2_client.go\"]"
+LABEL io.grpc.interop.workdir="/go/src/google.golang.org/grpc/interop/client"
+LABEL io.grpc.interop.env="{\"GO111MODULE\": \"on\"}"
+LABEL io.grpc.interop.capabilities="core_interop,timeout_on_sleeping_server,tls"
+ENV GO111MODULE=on
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+COPY --from=grpc_go . /go/src/google.golang.org/grpc
+RUN (cd /go/src/google.golang.org/grpc/interop/client && go install) \
+  && (cd /go/src/google.golang.org/grpc/interop/server && go install)
+  && if [ -d /go/src/google.golang.org/grpc/interop/http2 ]; then (cd /go/src/google.golang.org/grpc/interop/http2 && go build -o /go/bin/negative_http2_client negative_http2_client.go) || true; fi
+RUN mkdir -p /interop \
+  && printf '#!/bin/bash\nset -e\nexport GO111MODULE=on\ncd /go/src/google.golang.org/grpc/interop/client\nif [ -x /go/bin/client ]; then\n  exec /go/bin/client "$@"\nfi\nexec go run client.go "$@"\n' > /interop/client \
+  && printf '#!/bin/bash\nset -e\nexport GO111MODULE=on\ncd /go/src/google.golang.org/grpc/interop/server\nif [ -x /go/bin/server ]; then\n  exec /go/bin/server "$@"\nfi\nexec go run server.go "$@"\n' > /interop/server \
+  && printf '#!/bin/bash\nset -e\nexport GO111MODULE=on\ncd /go/src/google.golang.org/grpc/interop/http2\nif [ -x /go/bin/negative_http2_client ]; then\n  exec /go/bin/negative_http2_client "$@"\nfi\nexec go run negative_http2_client.go "$@"\n' > /interop/http2_client \
+  && chmod +x /interop/client /interop/server /interop/http2_client

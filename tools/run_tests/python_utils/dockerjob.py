@@ -35,10 +35,10 @@ def random_name(base_name):
 
 
 def docker_kill(cid):
-    """Kills a docker container. Returns True if successful."""
+    """Kills and removes a docker container synchronously. Returns True if successful."""
     return (
         subprocess.call(
-            ["docker", "kill", str(cid)],
+            ["docker", "rm", "-f", str(cid)],
             stdin=subprocess.PIPE,
             stdout=_DEVNULL,
             stderr=subprocess.STDOUT,

@@ -13,7 +13,8 @@
 # limitations under the License.
 
 # SHA is pinned to avoid unintended updates to Python
-FROM golang:latest@sha256:2c89c41fb9efc3807029b59af69645867cfe978d2b877d475be0d72f6c6ce6f6
+ARG BASE_IMAGE=base
+FROM golang:latest@sha256:2c89c41fb9efc3807029b59af69645867cfe978d2b877d475be0d72f6c6ce6f6 AS base
 
 # Using login shell removes Go from path, so we add it.
 RUN ln -s /usr/local/go/bin/go /usr/local/bin
@@ -38,3 +39,22 @@ RUN python3 -m pip install twisted h2==2.6.1 hyper
 # Define the default command.
 CMD ["bash"]
 
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+LABEL release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.client_cmd="[\"tools/http2_interop/http2_interop.test\", \"-test.v\"]"
+LABEL io.grpc.interop.server_cmd="[\"python test/http2_test/http2_test_server.py\"]"
+LABEL io.grpc.interop.http2_client_cmd="[]"
+LABEL io.grpc.interop.workdir="/var/local/git/grpc"
+LABEL io.grpc.interop.env="{}"
+LABEL io.grpc.interop.capabilities="http2_interop,http2_server_interop,insecure,tls"
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+COPY --from=grpc . /var/local/git/grpc
+RUN cd /var/local/git/grpc/tools/http2_interop && go test -c
+RUN mkdir -p /interop \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc\nexec tools/http2_interop/http2_interop.test -test.v "$@"\n' > /interop/client \
+  && printf '#!/bin/bash\nset -e\ncd /var/local/git/grpc\nexec python test/http2_test/http2_test_server.py "$@"\n' > /interop/server \
+  && chmod +x /interop/client /interop/server

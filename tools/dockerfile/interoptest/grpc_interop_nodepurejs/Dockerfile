@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM debian:11
+ARG BASE_IMAGE=base
+FROM debian:11 AS base
 
 #=================
 # Basic C core dependencies
@@ -91,3 +92,23 @@ RUN git config --global protocol.file.allow always
 
 # Define the default command.
 CMD ["bash"]
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+LABEL release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.release="${RELEASE_LABEL}"
+LABEL io.grpc.interop.client_cmd="[\"packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh\", \"node\", \"--require\", \"./test/fixtures/js_js\", \"test/interop/interop_client.js\"]"
+LABEL io.grpc.interop.server_cmd="[\"packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh\", \"node\", \"--require\", \"./test/fixtures/js_js\", \"test/interop/interop_server.js\"]"
+LABEL io.grpc.interop.http2_client_cmd="[]"
+LABEL io.grpc.interop.workdir="/var/local/git/grpc-node"
+LABEL io.grpc.interop.env="{}"
+LABEL io.grpc.interop.capabilities="core_interop,timeout_on_sleeping_server,tls"
+COPY --from=service_account --chown=appuser:appuser . /root/service_account/
+COPY --from=build_info --chown=appuser:appuser . /var/local/build_info/
+COPY --from=grpc_node --chown=appuser:appuser . /home/appuser/grpc-node
+RUN cd /home/appuser/grpc-node && ./setup_interop_purejs.sh
+USER root
+RUN mkdir -p /interop \
+  && printf '#!/bin/bash\nset -e\ncd /home/appuser/grpc-node\nexec packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh \\\n  node --require ./test/fixtures/js_js test/interop/interop_client.js "$@"\n' > /interop/client \
+  && chmod +x /interop/client && chown -R appuser:appuser /interop
+USER appuser
