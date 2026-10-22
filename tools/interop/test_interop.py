@@ -46,17 +46,21 @@ from tools.interop import runner  # noqa: E402
 from tools.run_tests.python_utils import dockerjob  # noqa: E402
 
 
+def _git_show_master_file(rel_path):
+    for ref in ("master", "origin/master"):
+        res = subprocess.run(
+            ["git", "-C", _REPO_ROOT, "show", f"{ref}:{rel_path}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if res.returncode == 0:
+            return res.stdout
+    raise RuntimeError(f"Could not read {rel_path} from master or origin/master")
+
+
 def _load_master_run_interop_tests():
-    src = subprocess.check_output(
-        [
-            "git",
-            "-C",
-            _REPO_ROOT,
-            "show",
-            "master:tools/run_tests/run_interop_tests.py",
-        ],
-        text=True,
-    )
+    src = _git_show_master_file("tools/run_tests/run_interop_tests.py")
     cutoff = src.index("args = argp.parse_args()")
     src = src[:cutoff]
     ns = {
@@ -70,16 +74,7 @@ def _load_master_run_interop_tests():
 
 
 def _load_master_client_matrix():
-    src = subprocess.check_output(
-        [
-            "git",
-            "-C",
-            _REPO_ROOT,
-            "show",
-            "master:tools/interop_matrix/client_matrix.py",
-        ],
-        text=True,
-    )
+    src = _git_show_master_file("tools/interop_matrix/client_matrix.py")
     ns = {
         "__file__": os.path.join(
             _REPO_ROOT, "tools/interop_matrix/client_matrix.py"
@@ -814,6 +809,145 @@ class InteropHarnessVerificationTest(unittest.TestCase):
             self.assertIn("--build-arg BASE_NAME=grpc_interop_csharp", out_legacy)
         finally:
             shutil.rmtree(temp_root, ignore_errors=True)
+
+    def test_18_config_schema_validation_and_sync(self):
+        """Verify config.schema.json validates config.json, rejects invalid configs, and stays in sync."""
+        config_path = os.path.join(_REPO_ROOT, "tools/interop/config.json")
+        schema_path = os.path.join(
+            _REPO_ROOT, "tools/interop/config.schema.json"
+        )
+        self.assertTrue(os.path.isfile(config_path))
+        self.assertTrue(os.path.isfile(schema_path))
+
+        with open(config_path, "r") as f:
+            config_lines = f.read().splitlines()
+            config_data = json.loads("\n".join(config_lines))
+        with open(schema_path, "r") as f:
+            schema_data = json.load(f)
+
+        # Ultra-concise config.json target: < 300 lines
+        self.assertLess(
+            len(config_lines),
+            300,
+            f"config.json should be < 300 lines (got {len(config_lines)})",
+        )
+
+        # Valid config passes both validate_json_schema and validate_config
+        runner.validate_json_schema(config_data, schema_data)
+        runner.validate_config(config_data, schema_data)
+
+        # Verify schema capability enum is strictly in sync with runner.Capability and config.json
+        schema_caps = set(schema_data["$defs"]["capability"]["enum"])
+        runner_caps = {c.value for c in runner.Capability}
+        config_caps = set(config_data["capabilities"])
+        self.assertEqual(schema_caps, runner_caps)
+        self.assertEqual(config_caps, runner_caps)
+
+        # Verify every object schema in config.schema.json enforces additionalProperties
+        def check_strict_objects(node, path="$"):
+            if isinstance(node, dict):
+                if node.get("type") == "object":
+                    self.assertIn(
+                        "additionalProperties",
+                        node,
+                        f"{path} object schema must specify additionalProperties",
+                    )
+                for k, v in node.items():
+                    check_strict_objects(v, f"{path}.{k}")
+            elif isinstance(node, list):
+                for idx, item in enumerate(node):
+                    check_strict_objects(item, f"{path}[{idx}]")
+
+        check_strict_objects(schema_data)
+
+        # Verify human documentation in schema description covers adding language, test case, and matrix release
+        desc = schema_data.get("description", "")
+        self.assertIn("HOW TO ADD A LANGUAGE", desc)
+        self.assertIn("HOW TO ADD A TEST CASE", desc)
+        self.assertIn("HOW TO ADD A MATRIX RELEASE", desc)
+
+        # Negative test 1: unexpected root property rejected by additionalProperties: false
+        bad = json.loads(json.dumps(config_data))
+        bad["unexpected_field"] = True
+        with self.assertRaises(runner.SchemaValidationError):
+            runner.validate_config(bad, schema_data)
+
+        # Negative test 2: unexpected language property rejected
+        bad = json.loads(json.dumps(config_data))
+        bad["languages"]["go"]["unknown_key"] = "foo"
+        with self.assertRaises(runner.SchemaValidationError):
+            runner.validate_config(bad, schema_data)
+
+        # Negative test 3: invalid capability enum in client_capabilities_add rejected
+        bad = json.loads(json.dumps(config_data))
+        bad["languages"]["go"]["client_capabilities_add"].append(
+            "NON_EXISTENT_CAPABILITY"
+        )
+        with self.assertRaises(runner.SchemaValidationError):
+            runner.validate_config(bad, schema_data)
+
+        # Negative test 4: missing required client_cmd rejected
+        bad = json.loads(json.dumps(config_data))
+        del bad["languages"]["ruby"]["client_cmd"]
+        with self.assertRaises(runner.SchemaValidationError):
+            runner.validate_config(bad, schema_data)
+
+        # Negative test 5: duplicate capability in uniqueItems array rejected
+        bad = json.loads(json.dumps(config_data))
+        bad["prod_server_capabilities"].append(
+            bad["prod_server_capabilities"][0]
+        )
+        with self.assertRaises(runner.SchemaValidationError):
+            runner.validate_config(bad, schema_data)
+
+        # Negative test 6: invalid matrix override tag or inverted slice range rejected
+        bad = json.loads(json.dumps(config_data))
+        bad["matrix"]["cxx"]["overrides"]["v99.99.99"] = {
+            "testcases_file": "cxx__v1.0.1"
+        }
+        with self.assertRaises(runner.SchemaValidationError):
+            runner.validate_config(bad, schema_data)
+
+        bad_range = json.loads(json.dumps(config_data))
+        bad_range["matrix"]["cxx"]["overrides"]["v1.19.0..v1.0.1"] = {
+            "testcases_file": "cxx__v1.0.1"
+        }
+        with self.assertRaises(runner.SchemaValidationError):
+            runner.validate_config(bad_range, schema_data)
+
+    def test_19_delta_config_conciseness_and_extensibility(self):
+        """Verify adding a new language or test case requires minimal delta lines."""
+        with open(
+            os.path.join(_REPO_ROOT, "tools/interop/config.json"), "r"
+        ) as f:
+            cfg = json.load(f)
+        with open(
+            os.path.join(_REPO_ROOT, "tools/interop/config.schema.json"), "r"
+        ) as sf:
+            schema = json.load(sf)
+
+        # Adding a minimal new language with string command and 1 capability delta
+        minimal_lang_raw = {
+            "client_cmd": "bin/rust_interop_client",
+            "server_cmd": "bin/rust_interop_server",
+            "client_capabilities_add": ["ORCA"],
+        }
+        runner.validate_json_schema(
+            minimal_lang_raw,
+            schema["$defs"]["languageConfig"],
+            schema,
+        )
+        resolved = runner._resolve_language_config(
+            "rust", minimal_lang_raw, cfg["language_defaults"]
+        )
+        lang_obj = runner.ConfigurableLanguage("rust", resolved)
+        self.assertEqual(lang_obj.safename, "rust")
+        self.assertIn(runner.Capability.CORE_INTEROP, lang_obj.client_capabilities)
+        self.assertIn(runner.Capability.ORCA, lang_obj.client_capabilities)
+        self.assertEqual(
+            lang_obj.client_cmd(["--server_port=8080"]),
+            ["bin/rust_interop_client", "--server_port=8080"],
+        )
 
 
 if __name__ == "__main__":
