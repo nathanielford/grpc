@@ -15,6 +15,7 @@
 """Verification and adversarial regression test suite for gRPC interop harness."""
 
 import ast
+import copy
 import glob
 import io
 import json
@@ -46,17 +47,22 @@ from tools.interop import runner  # noqa: E402
 from tools.run_tests.python_utils import dockerjob  # noqa: E402
 
 
+def _git_show_master(rel_path):
+    for ref in ("master", "origin/master"):
+        proc = subprocess.run(
+            ["git", "-C", _REPO_ROOT, "show", f"{ref}:{rel_path}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return proc.stdout
+    raise RuntimeError(f"Could not read {rel_path} from master or origin/master")
+
+
 def _load_master_run_interop_tests():
-    src = subprocess.check_output(
-        [
-            "git",
-            "-C",
-            _REPO_ROOT,
-            "show",
-            "master:tools/run_tests/run_interop_tests.py",
-        ],
-        text=True,
-    )
+    src = _git_show_master("tools/run_tests/run_interop_tests.py")
     cutoff = src.index("args = argp.parse_args()")
     src = src[:cutoff]
     ns = {
@@ -70,16 +76,7 @@ def _load_master_run_interop_tests():
 
 
 def _load_master_client_matrix():
-    src = subprocess.check_output(
-        [
-            "git",
-            "-C",
-            _REPO_ROOT,
-            "show",
-            "master:tools/interop_matrix/client_matrix.py",
-        ],
-        text=True,
-    )
+    src = _git_show_master("tools/interop_matrix/client_matrix.py")
     ns = {
         "__file__": os.path.join(
             _REPO_ROOT, "tools/interop_matrix/client_matrix.py"
@@ -814,6 +811,104 @@ class InteropHarnessVerificationTest(unittest.TestCase):
             self.assertIn("--build-arg BASE_NAME=grpc_interop_csharp", out_legacy)
         finally:
             shutil.rmtree(temp_root, ignore_errors=True)
+
+    def test_18_config_schema_validation_and_compactness(self):
+        """Verify config.schema.json sync, < 400 line compactness, and positive/negative schema validation."""
+        cfg_path = os.path.join(_REPO_ROOT, "tools/interop/config.json")
+        schema_path = os.path.join(_REPO_ROOT, "tools/interop/config.schema.json")
+        self.assertTrue(os.path.exists(cfg_path))
+        self.assertTrue(os.path.exists(schema_path))
+
+        with open(cfg_path) as f:
+            cfg_lines = f.readlines()
+        self.assertLess(
+            len(cfg_lines),
+            400,
+            f"config.json should be compact (< 400 lines), got {len(cfg_lines)}",
+        )
+
+        cfg = runner.load_config(cfg_path, schema_path)
+        schema = runner.load_schema(schema_path)
+        self.assertEqual(cfg["$schema"], "./config.schema.json")
+        self.assertEqual(cfg["schema_version"], "3.0")
+
+        # Every top-level key in config.json must be in config.schema.json properties with description
+        for key in cfg:
+            self.assertIn(key, schema["properties"])
+            if key != "$schema":
+                self.assertTrue(
+                    schema["properties"][key].get("description"),
+                    f"Missing description for top-level property {key} in config.schema.json",
+                )
+
+        def assert_invalid(mutator, msg):
+            bad = copy.deepcopy(cfg)
+            mutator(bad)
+            with self.assertRaises(runner.SchemaValidationError, msg=msg):
+                runner.validate_config_schema(bad, schema)
+                runner._validate_matrix_release_overrides(bad)
+
+        assert_invalid(
+            lambda d: d.pop("languages"),
+            "Missing required key 'languages' must fail validation",
+        )
+        assert_invalid(
+            lambda d: d.__setitem__("schema_version", "2.0"),
+            "Wrong schema_version const must fail validation",
+        )
+        assert_invalid(
+            lambda d: d.__setitem__("unexpected_top_key", True),
+            "Unexpected top-level property must fail validation",
+        )
+        assert_invalid(
+            lambda d: d["languages"]["c++"].__setitem__("bogus_prop", 1),
+            "Unexpected language property must fail validation",
+        )
+        assert_invalid(
+            lambda d: d["languages"]["c++"].__setitem__(
+                "add_client_capabilities", ["NONEXISTENT_CAPABILITY"]
+            ),
+            "Unknown capability enum value must fail validation",
+        )
+        assert_invalid(
+            lambda d: d["languages"]["python"]["client_cmd"].__setitem__(
+                "args_mode", "bogus_args_mode"
+            ),
+            "Invalid args_mode enum value must fail validation",
+        )
+        assert_invalid(
+            lambda d: d["languages"]["c++"].__setitem__(
+                "docker_supported", "not_a_bool"
+            ),
+            "Wrong property type must fail validation",
+        )
+        assert_invalid(
+            lambda d: d["capabilities"].append("CORE_INTEROP"),
+            "Duplicate capability in uniqueItems array must fail validation",
+        )
+        assert_invalid(
+            lambda d: d["matrix"]["languages"]["cxx"]["release_overrides"].__setitem__(
+                "v99.99.99", {"testcases_file": "cxx__v1.0.1"}
+            ),
+            "Unknown release tag in release_overrides must fail validation",
+        )
+        assert_invalid(
+            lambda d: d["matrix"]["languages"]["cxx"]["release_overrides"].__setitem__(
+                "v1.19.0..v1.0.1", {"testcases_file": "cxx__v1.0.1"}
+            ),
+            "Inverted release tag range in release_overrides must fail validation",
+        )
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
+            bad_cfg = copy.deepcopy(cfg)
+            bad_cfg["unexpected"] = 123
+            json.dump(bad_cfg, tf)
+            temp_bad_path = tf.name
+        try:
+            with self.assertRaises(runner.SchemaValidationError):
+                runner.load_config(temp_bad_path, schema_path)
+        finally:
+            os.unlink(temp_bad_path)
 
 
 if __name__ == "__main__":

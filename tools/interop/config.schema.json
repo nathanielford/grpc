@@ -1,0 +1,662 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "gRPC Interop Harness Configuration Schema",
+  "description": "Declarative schema for gRPC cross-language interoperability test cases, language endpoints, capabilities, and backward-compatibility release matrix.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "capabilities",
+    "prod_servers",
+    "prod_server_capabilities",
+    "server_order",
+    "http2_badserver_client_order",
+    "alts_language_order",
+    "test_cases",
+    "language_defaults",
+    "languages",
+    "matrix"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path or URI to this JSON Schema file."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "3.0",
+      "description": "Configuration schema version identifier."
+    },
+    "capabilities": {
+      "description": "Canonical list of all positive feature and transport capabilities recognized by the harness.",
+      "$ref": "#/$defs/capabilityList",
+      "minItems": 25
+    },
+    "prod_servers": {
+      "type": "object",
+      "description": "Mapping of production server nicknames to target hostnames for cloud_to_prod suites.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "prod_server_capabilities": {
+      "description": "Capabilities supported by production interop target servers.",
+      "$ref": "#/$defs/capabilityList"
+    },
+    "server_order": {
+      "type": "array",
+      "description": "Canonical ordering of server languages for cloud_to_cloud execution and CLI choices.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "http2_badserver_client_order": {
+      "type": "array",
+      "description": "Canonical ordering of languages with HTTP/2 negative test clients.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "alts_language_order": {
+      "type": "array",
+      "description": "Canonical ordering of languages supporting ALTS transport security.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "test_cases": {
+      "type": "object",
+      "description": "Unified test case definitions and required capability sets grouped by suite.",
+      "additionalProperties": false,
+      "required": [
+        "standard",
+        "auth",
+        "http2_client",
+        "http2_server"
+      ],
+      "properties": {
+        "standard": {
+          "type": "array",
+          "description": "Standard gRPC interoperability test cases run in cloud_to_cloud and cloud_to_prod.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/standardTestCase"
+          }
+        },
+        "auth": {
+          "type": "array",
+          "description": "Authentication and credential interoperability test cases run in cloud_to_prod_auth.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/authTestCase"
+          }
+        },
+        "http2_client": {
+          "type": "array",
+          "description": "HTTP/2 client framing and TLS test cases.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/http2ClientTestCase"
+          }
+        },
+        "http2_server": {
+          "type": "array",
+          "description": "HTTP/2 negative and data-frame padding server test cases across 8 ports.",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/http2ServerTestCase"
+          }
+        }
+      }
+    },
+    "language_defaults": {
+      "description": "Baseline settings and capabilities inherited by all entries in languages unless overridden.",
+      "$ref": "#/$defs/languageDefaults"
+    },
+    "languages": {
+      "type": "object",
+      "description": "Per-language endpoint definitions layered on top of language_defaults.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/languageConfig"
+      }
+    },
+    "matrix": {
+      "type": "object",
+      "description": "Backward-compatibility client release matrix configuration.",
+      "additionalProperties": false,
+      "required": [
+        "languages"
+      ],
+      "properties": {
+        "languages": {
+          "type": "object",
+          "description": "Per-language release tags, runtime mappings, and historical release overrides.",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/matrixLanguageConfig"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "capability": {
+      "type": "string",
+      "description": "A positive gRPC interop feature or transport capability.",
+      "enum": [
+        "CORE_INTEROP",
+        "ADVANCED_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SERVER_COMPRESSION_UNARY",
+        "SERVER_COMPRESSION_STREAMING",
+        "SPECIAL_STATUS_MESSAGE",
+        "DATA_FRAME_PADDING",
+        "ORCA",
+        "SINGLE_INVOCATION_SUITE",
+        "AUTH_CREDS",
+        "AUTH_KEY_FILE_FLAG",
+        "AUTH_KEY_FILE_ENV",
+        "GOOGLE_DEFAULT_CREDS",
+        "GCE_CHANNEL_CREDS",
+        "GCE_OAUTH2",
+        "OAUTH2_DEFAULT_ACCOUNT_ARG",
+        "HTTP2_INTEROP",
+        "HTTP2_SERVER_INTEROP",
+        "HTTP2_BADSERVER_CLIENT",
+        "HTTP2_BADPEER_CLIENT",
+        "TLS",
+        "INSECURE",
+        "ALTS"
+      ]
+    },
+    "capabilityList": {
+      "type": "array",
+      "description": "List of unique capability identifiers.",
+      "items": {
+        "$ref": "#/$defs/capability"
+      },
+      "uniqueItems": true
+    },
+    "commandSpec": {
+      "description": "Command invocation specification: either a token list, a single executable string, or a structured template object.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "args_mode"
+          ],
+          "properties": {
+            "command": {
+              "type": "array",
+              "description": "Base command tokens preceding formatted arguments.",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "args_mode": {
+              "type": "string",
+              "description": "How runtime CLI arguments are passed to the command.",
+              "enum": [
+                "append",
+                "joined_flag",
+                "ignore_args",
+                "extract_port_template"
+              ]
+            },
+            "arg_template": {
+              "type": "string",
+              "description": "Format string template for joined_flag or extract_port_template modes."
+            },
+            "port_regex": {
+              "type": "string",
+              "description": "Regular expression used to extract server port in extract_port_template mode."
+            }
+          }
+        }
+      ]
+    },
+    "standardTestCase": {
+      "type": "object",
+      "description": "Standard gRPC interoperability test case specification.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "capabilities"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Test case identifier passed to --test_case."
+        },
+        "capabilities": {
+          "description": "Capabilities required by both client and server to run this test case.",
+          "$ref": "#/$defs/capabilityList",
+          "minItems": 1
+        },
+        "cloud_to_prod": {
+          "type": "boolean",
+          "description": "Whether this test case is eligible for cloud_to_prod and matrix suites."
+        },
+        "extra_cloud_to_cloud_flags": {
+          "type": "array",
+          "description": "Additional client CLI flags appended when running in cloud_to_cloud.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "authTestCase": {
+      "type": "object",
+      "description": "Cloud-to-prod authentication test case specification.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "capabilities"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Auth test case identifier passed to --test_case."
+        },
+        "capabilities": {
+          "description": "Capabilities required by client and server for this auth test case.",
+          "$ref": "#/$defs/capabilityList",
+          "minItems": 1
+        },
+        "transport_security": {
+          "type": "string",
+          "description": "Transport security / credential type used by this test case (defaults to tls).",
+          "enum": [
+            "tls",
+            "google_default_credentials",
+            "compute_engine_channel_creds"
+          ]
+        },
+        "requires_compute_engine_creds": {
+          "type": "boolean",
+          "description": "Whether this test case always requires GCE metadata server credentials."
+        },
+        "uses_service_account_key": {
+          "type": "boolean",
+          "description": "Whether this test case requires a service account key file via flag or env."
+        },
+        "uses_service_account_key_when_flag": {
+          "type": "string",
+          "description": "CLI flag attribute name that conditionally enables service account key file env var."
+        },
+        "uses_oauth_scope": {
+          "type": "boolean",
+          "description": "Whether to pass --oauth_scope to the client."
+        },
+        "uses_default_service_account": {
+          "type": "boolean",
+          "description": "Whether to pass --default_service_account to the client."
+        },
+        "requires_compute_engine_creds_capability": {
+          "description": "Client capability that causes this test case to require GCE credentials.",
+          "$ref": "#/$defs/capability"
+        },
+        "uses_default_service_account_capability": {
+          "description": "Client capability that causes this test case to pass --default_service_account.",
+          "$ref": "#/$defs/capability"
+        }
+      }
+    },
+    "http2ClientTestCase": {
+      "type": "object",
+      "description": "HTTP/2 client interop test case specification.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "capabilities"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "HTTP/2 client test case identifier."
+        },
+        "capabilities": {
+          "description": "Capabilities required by client and server.",
+          "$ref": "#/$defs/capabilityList",
+          "minItems": 1
+        }
+      }
+    },
+    "http2ServerTestCase": {
+      "type": "object",
+      "description": "HTTP/2 negative server test case specification.",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "client_capabilities",
+        "server_capabilities"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "HTTP/2 server test case identifier."
+        },
+        "client_capabilities": {
+          "description": "Capabilities required on the client endpoint.",
+          "$ref": "#/$defs/capabilityList",
+          "minItems": 1
+        },
+        "server_capabilities": {
+          "description": "Capabilities required on the HTTP/2 test server endpoint.",
+          "$ref": "#/$defs/capabilityList",
+          "minItems": 1
+        },
+        "client_kind": {
+          "type": "string",
+          "description": "Whether this test uses the dedicated http2_interop client or standard grpc_client.",
+          "enum": [
+            "http2_interop",
+            "grpc_client"
+          ]
+        },
+        "grpc_client_test_case": {
+          "type": "string",
+          "description": "Underlying gRPC client test_case name when client_kind is grpc_client."
+        },
+        "transport_security_override": {
+          "type": "string",
+          "description": "Transport security override when invoking grpc_client against the HTTP/2 server.",
+          "enum": [
+            "tls",
+            "insecure",
+            "alts"
+          ]
+        }
+      }
+    },
+    "languageDefaults": {
+      "type": "object",
+      "description": "Default configuration values inherited by all language endpoints.",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "in_runner_languages",
+        "included_in_all_clients",
+        "supports_server",
+        "docker_supported",
+        "auth_credentials_mode",
+        "client_capabilities",
+        "server_capabilities"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Default repository identifier."
+        },
+        "in_runner_languages": {
+          "type": "boolean",
+          "description": "Whether the language is registered in _LANGUAGES by default."
+        },
+        "included_in_all_clients": {
+          "type": "boolean",
+          "description": "Whether the language is included when -l all is specified."
+        },
+        "supports_server": {
+          "type": "boolean",
+          "description": "Whether the language provides an interop server by default."
+        },
+        "docker_supported": {
+          "type": "boolean",
+          "description": "Whether the language runs inside Docker when --use_docker is enabled."
+        },
+        "auth_credentials_mode": {
+          "type": "string",
+          "enum": [
+            "env",
+            "flag"
+          ],
+          "description": "Default mechanism for passing service account credentials (GOOGLE_APPLICATION_CREDENTIALS env vs --service_account_key_file flag)."
+        },
+        "client_capabilities": {
+          "description": "Baseline client capabilities inherited by languages that do not explicitly override client_capabilities.",
+          "$ref": "#/$defs/capabilityList"
+        },
+        "server_capabilities": {
+          "description": "Baseline server capabilities inherited by languages that do not explicitly override server_capabilities.",
+          "$ref": "#/$defs/capabilityList"
+        }
+      }
+    },
+    "languageConfig": {
+      "type": "object",
+      "description": "Configuration for a single gRPC language or HTTP/2 endpoint.",
+      "additionalProperties": false,
+      "required": [
+        "client_cmd"
+      ],
+      "properties": {
+        "safename": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Docker-safe short name (defaults to language key)."
+        },
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repository owning this language implementation."
+        },
+        "in_runner_languages": {
+          "type": "boolean",
+          "description": "Whether to expose this endpoint in _LANGUAGES."
+        },
+        "included_in_all_clients": {
+          "type": "boolean",
+          "description": "Whether to include this client in -l all."
+        },
+        "supports_server": {
+          "type": "boolean",
+          "description": "Whether this endpoint supports running as a server."
+        },
+        "docker_supported": {
+          "type": "boolean",
+          "description": "Whether this endpoint supports Docker execution."
+        },
+        "is_http2_target": {
+          "type": "boolean",
+          "description": "Whether this entry represents the dedicated Http2Client/Http2Server target."
+        },
+        "auth_credentials_mode": {
+          "type": "string",
+          "enum": [
+            "env",
+            "flag"
+          ],
+          "description": "Credential delivery mode override (env or flag)."
+        },
+        "client_cwd": {
+          "type": "string",
+          "description": "Working directory relative to container/repo root for client invocations."
+        },
+        "server_cwd": {
+          "type": "string",
+          "description": "Working directory relative to container/repo root for server invocations."
+        },
+        "http2_cwd": {
+          "type": "string",
+          "description": "Working directory relative to container/repo root for HTTP/2 negative client invocations."
+        },
+        "global_env": {
+          "type": "object",
+          "description": "Environment variables set for all invocations of this language.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "cloud_to_prod_env": {
+          "type": "object",
+          "description": "Additional environment variables set for cloud_to_prod invocations.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "client_cmd": {
+          "description": "Command specification for running the interop client.",
+          "$ref": "#/$defs/commandSpec"
+        },
+        "server_cmd": {
+          "description": "Command specification for running the interop server.",
+          "$ref": "#/$defs/commandSpec"
+        },
+        "http2_client_cmd": {
+          "description": "Command specification for running the HTTP/2 negative test client.",
+          "$ref": "#/$defs/commandSpec"
+        },
+        "client_capabilities": {
+          "description": "Full replacement list of client capabilities (overrides language_defaults.client_capabilities).",
+          "$ref": "#/$defs/capabilityList"
+        },
+        "add_client_capabilities": {
+          "description": "Capabilities added to the inherited baseline client_capabilities.",
+          "$ref": "#/$defs/capabilityList"
+        },
+        "remove_client_capabilities": {
+          "description": "Capabilities removed from the inherited baseline client_capabilities.",
+          "$ref": "#/$defs/capabilityList"
+        },
+        "server_capabilities": {
+          "description": "Full replacement list of server capabilities (overrides language_defaults.server_capabilities).",
+          "$ref": "#/$defs/capabilityList"
+        },
+        "add_server_capabilities": {
+          "description": "Capabilities added to the inherited baseline server_capabilities.",
+          "$ref": "#/$defs/capabilityList"
+        },
+        "remove_server_capabilities": {
+          "description": "Capabilities removed from the inherited baseline server_capabilities.",
+          "$ref": "#/$defs/capabilityList"
+        },
+        "http2_server_client_capabilities": {
+          "description": "Client capability view when instantiated in the Http2Server role.",
+          "$ref": "#/$defs/capabilityList"
+        },
+        "http2_client_server_capabilities": {
+          "description": "Server capability view when instantiated in the Http2Client role.",
+          "$ref": "#/$defs/capabilityList"
+        }
+      }
+    },
+    "matrixReleaseOverride": {
+      "type": "object",
+      "description": "Release-specific or range-specific overrides for historical matrix releases.",
+      "additionalProperties": false,
+      "properties": {
+        "patch": {
+          "type": "array",
+          "description": "Files touched by git_repo.patch when building this historical release tag.",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "runtimes": {
+          "type": "array",
+          "description": "Runtime image variants overriding default_runtimes for this release or range.",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "testcases_file": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Historical matrix testcase profile identifier overriding <lang>__master."
+        }
+      }
+    },
+    "matrixLanguageConfig": {
+      "type": "object",
+      "description": "Release matrix configuration for a language.",
+      "additionalProperties": false,
+      "required": [
+        "releases"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Git repository URL cloned when building release images (defaults to https://github.com/grpc/grpc.git)."
+        },
+        "default_runtimes": {
+          "type": "array",
+          "description": "Default container runtime names for this language (defaults to [lang]).",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "build_from_release_tag": {
+          "type": "boolean",
+          "description": "Whether build_interop_image.sh is invoked from the checked-out release tag (defaults to true)."
+        },
+        "root_env_var": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Environment variable pointing to the checked-out repository root (defaults to GRPC_ROOT)."
+        },
+        "releases": {
+          "type": "array",
+          "description": "Ordered list of release version tags tested in the backward-compatibility matrix.",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^v[0-9A-Za-z._-]+$"
+          }
+        },
+        "release_overrides": {
+          "type": "object",
+          "description": "Map of release tag ('vX.Y.Z') or inclusive tag range ('vA.B.C..vD.E.F') to ReleaseInfo overrides.",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^v[0-9A-Za-z._-]+(\\.\\.v[0-9A-Za-z._-]+)?$": {
+              "$ref": "#/$defs/matrixReleaseOverride"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -34,6 +34,7 @@ import uuid
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(_THIS_DIR, "../.."))
 DEFAULT_CONFIG_PATH = os.path.join(_THIS_DIR, "config.json")
+DEFAULT_SCHEMA_PATH = os.path.join(_THIS_DIR, "config.schema.json")
 
 _PYTHON_UTILS_DIR = os.path.join(ROOT, "tools/run_tests/python_utils")
 if _PYTHON_UTILS_DIR not in sys.path:
@@ -102,47 +103,312 @@ def _parse_capability_set(items):
     return frozenset(_parse_capability(x) for x in (items or []))
 
 
-def load_config(config_path=None):
-    """Loads and validates tools/interop/config.json."""
+class SchemaValidationError(ValueError):
+    """Raised when config.json fails validation against config.schema.json."""
+
+
+def _matches_json_type(val, expected_type):
+    if expected_type == "object":
+        return isinstance(val, dict)
+    if expected_type == "array":
+        return isinstance(val, list)
+    if expected_type == "string":
+        return isinstance(val, str)
+    if expected_type == "boolean":
+        return isinstance(val, bool)
+    if expected_type == "integer":
+        return isinstance(val, int) and not isinstance(val, bool)
+    if expected_type == "number":
+        return isinstance(val, (int, float)) and not isinstance(val, bool)
+    if expected_type == "null":
+        return val is None
+    raise SchemaValidationError("Unknown JSON Schema type: %r" % expected_type)
+
+
+def validate_config_schema(data, schema, path="$", root_schema=None):
+    """Zero-dependency stdlib JSON Schema validator for config.json."""
+    if root_schema is None:
+        root_schema = schema
+
+    if "$ref" in schema:
+        ref = schema["$ref"]
+        if not ref.startswith("#/$defs/"):
+            raise SchemaValidationError(
+                "%s: unsupported $ref %r" % (path, ref)
+            )
+        def_name = ref[len("#/$defs/") :]
+        defs = root_schema.get("$defs", {})
+        if def_name not in defs:
+            raise SchemaValidationError(
+                "%s: unknown $ref definition %r" % (path, ref)
+            )
+        validate_config_schema(
+            data, defs[def_name], path=path, root_schema=root_schema
+        )
+
+    if "type" in schema:
+        expected = schema["type"]
+        types = expected if isinstance(expected, list) else [expected]
+        if not any(_matches_json_type(data, t) for t in types):
+            raise SchemaValidationError(
+                "%s: expected type %r, got %s (%r)"
+                % (path, expected, type(data).__name__, data)
+            )
+
+    if "const" in schema and data != schema["const"]:
+        raise SchemaValidationError(
+            "%s: expected const %r, got %r" % (path, schema["const"], data)
+        )
+
+    if "enum" in schema and data not in schema["enum"]:
+        raise SchemaValidationError(
+            "%s: value %r not in enum %r" % (path, data, schema["enum"])
+        )
+
+    if "pattern" in schema and isinstance(data, str):
+        if not re.search(schema["pattern"], data):
+            raise SchemaValidationError(
+                "%s: string %r does not match pattern %r"
+                % (path, data, schema["pattern"])
+            )
+
+    if "oneOf" in schema:
+        matches = 0
+        errors = []
+        for sub in schema["oneOf"]:
+            try:
+                validate_config_schema(
+                    data, sub, path=path, root_schema=root_schema
+                )
+                matches += 1
+            except SchemaValidationError as exc:
+                errors.append(str(exc))
+        if matches != 1:
+            raise SchemaValidationError(
+                "%s: expected value to match exactly 1 oneOf branch (matched %d): %s"
+                % (path, matches, "; ".join(errors))
+            )
+
+    if "anyOf" in schema:
+        matches = 0
+        errors = []
+        for sub in schema["anyOf"]:
+            try:
+                validate_config_schema(
+                    data, sub, path=path, root_schema=root_schema
+                )
+                matches += 1
+            except SchemaValidationError as exc:
+                errors.append(str(exc))
+        if matches < 1:
+            raise SchemaValidationError(
+                "%s: value did not match any anyOf branch: %s"
+                % (path, "; ".join(errors))
+            )
+
+    if isinstance(data, list):
+        if "minItems" in schema and len(data) < schema["minItems"]:
+            raise SchemaValidationError(
+                "%s: expected at least %d items, got %d"
+                % (path, schema["minItems"], len(data))
+            )
+        if schema.get("uniqueItems"):
+            seen = set()
+            for idx, item in enumerate(data):
+                key = json.dumps(item, sort_keys=True)
+                if key in seen:
+                    raise SchemaValidationError(
+                        "%s[%d]: duplicate item %r in uniqueItems array"
+                        % (path, idx, item)
+                    )
+                seen.add(key)
+        if "items" in schema:
+            for idx, item in enumerate(data):
+                validate_config_schema(
+                    item,
+                    schema["items"],
+                    path="%s[%d]" % (path, idx),
+                    root_schema=root_schema,
+                )
+
+    if isinstance(data, dict):
+        for req_key in schema.get("required", []):
+            if req_key not in data:
+                raise SchemaValidationError(
+                    "%s: missing required property %r" % (path, req_key)
+                )
+        props = schema.get("properties", {})
+        pattern_props = schema.get("patternProperties", {})
+        add_props = schema.get("additionalProperties", True)
+        prop_names_schema = schema.get("propertyNames")
+
+        for k, v in data.items():
+            key_path = "%s.%s" % (path, k)
+            if prop_names_schema is not None:
+                validate_config_schema(
+                    k,
+                    prop_names_schema,
+                    path="%s(key:%r)" % (path, k),
+                    root_schema=root_schema,
+                )
+            matched = False
+            if k in props:
+                matched = True
+                validate_config_schema(
+                    v, props[k], path=key_path, root_schema=root_schema
+                )
+            for pat, pat_schema in pattern_props.items():
+                if re.search(pat, k):
+                    matched = True
+                    validate_config_schema(
+                        v, pat_schema, path=key_path, root_schema=root_schema
+                    )
+            if not matched:
+                if add_props is False:
+                    raise SchemaValidationError(
+                        "%s: unexpected additional property %r" % (path, k)
+                    )
+                if isinstance(add_props, dict):
+                    validate_config_schema(
+                        v, add_props, path=key_path, root_schema=root_schema
+                    )
+
+
+def _validate_matrix_release_overrides(data):
+    """Validates that matrix release_overrides keys reference valid tags or tag ranges."""
+    matrix_langs = data.get("matrix", {}).get("languages", {})
+    for mlang, mdata in matrix_langs.items():
+        releases = mdata.get("releases", [])
+        if not isinstance(releases, list):
+            continue
+        overrides = mdata.get("release_overrides", {})
+        for key in overrides:
+            if ".." in key:
+                start_tag, end_tag = key.split("..", 1)
+                if start_tag not in releases or end_tag not in releases:
+                    raise SchemaValidationError(
+                        "$.matrix.languages.%s.release_overrides[%r]: range endpoints must exist in releases"
+                        % (mlang, key)
+                )
+                if releases.index(start_tag) > releases.index(end_tag):
+                    raise SchemaValidationError(
+                        "$.matrix.languages.%s.release_overrides[%r]: range start %r comes after end %r"
+                        % (mlang, key, start_tag, end_tag)
+                    )
+            elif key not in releases:
+                raise SchemaValidationError(
+                    "$.matrix.languages.%s.release_overrides[%r]: unknown release tag"
+                    % (mlang, key)
+                )
+
+
+def load_schema(schema_path=None):
+    """Loads tools/interop/config.schema.json."""
+    path = schema_path or DEFAULT_SCHEMA_PATH
+    with open(path, "r") as f:
+        return json.load(f)
+
+
+def load_config(config_path=None, schema_path=None):
+    """Loads and validates tools/interop/config.json against tools/interop/config.schema.json."""
     path = config_path or DEFAULT_CONFIG_PATH
     with open(path, "r") as f:
         data = json.load(f)
-    required_keys = (
-        "schema_version",
-        "capabilities",
-        "defaults",
-        "prod_servers",
-        "transport_security",
-        "custom_credentials_types",
-        "suites",
-        "test_cases",
-        "test_case_capabilities",
-        "languages",
-        "matrix",
-    )
-    for k in required_keys:
-        if k not in data:
-            raise ValueError("Missing required key in config.json: %s" % k)
+    schema = load_schema(schema_path)
+    validate_config_schema(data, schema)
+    _validate_matrix_release_overrides(data)
     return data
 
 
 _CONFIG = load_config()
 
-DOCKER_WORKDIR_ROOT = _CONFIG["defaults"].get(
-    "docker_workdir_root", "/var/local/git/grpc"
+# Fixed harness protocol constants
+DOCKER_WORKDIR_ROOT = "/var/local/git/grpc"
+_DEFAULT_SERVER_PORT = 8080
+_TEST_TIMEOUT = 3 * 60
+_SERVER_STARTUP_TIMEOUT = 30 * 60
+_BUILD_IMAGE_TIMEOUT = 45 * 60
+_DOCKER_BUILD_XML_REPORT = "interop_docker_build/sponge_log.xml"
+_TESTS_XML_REPORT = "interop_test/sponge_log.xml"
+_MATRIX_XML_REPORT = "report.xml"
+_DEFAULT_SERVICE_ACCOUNT_KEY_FILE = (
+    "/root/service_account/grpc-testing-ebe7c1ac7381.json"
 )
-_DEFAULT_SERVER_PORT = int(_CONFIG["defaults"].get("default_server_port", 8080))
-_TEST_TIMEOUT = int(_CONFIG["defaults"].get("test_timeout_seconds", 3 * 60))
-_REPORTS_CFG = _CONFIG["defaults"].get("reports", {})
-_DOCKER_BUILD_XML_REPORT = _REPORTS_CFG.get(
-    "docker_build_xml",
-    _CONFIG["defaults"].get(
-        "docker_build_xml_report", "interop_docker_build/sponge_log.xml"
-    ),
+_DEFAULT_SERVICE_ACCOUNT = (
+    "830293263384-compute@developer.gserviceaccount.com"
 )
-_TESTS_XML_REPORT = _REPORTS_CFG.get(
-    "tests_xml",
-    _CONFIG["defaults"].get("tests_xml_report", "interop_test/sponge_log.xml"),
+_OAUTH_SCOPE = "https://www.googleapis.com/auth/xapi.zoo"
+_C2C_CLIENT_EXTRA_FLAGS = [
+    "--server_host_override=foo.test.google.fr",
+    "--use_test_ca=true",
+]
+_MATRIX_TEST_TIMEOUT = 60
+_MATRIX_PULL_IMAGE_TIMEOUT = 15 * 60
+_MATRIX_BUILD_IMAGE_TIMEOUT = 30 * 60
+_MATRIX_FLAKE_RETRIES = 5
+_MATRIX_DEFAULT_DOCKER_PATH = (
+    "us-docker.pkg.dev/grpc-testing/testing-images-public"
+)
+_MATRIX_DEFAULT_GIT_CHECKOUT_ROOT = "/export/hda3/tmp/grpc_matrix"
+_MATRIX_DEFAULT_SERVER_HOST = "74.125.206.210"
+
+_TRANSPORT_SECURITY_SPECS = OrderedDict(
+    [
+        (
+            "tls",
+            {
+                "required_capability": "TLS",
+                "client_flags": ["--use_tls=true"],
+                "server_flags": ["--use_tls=true"],
+            },
+        ),
+        (
+            "alts",
+            {
+                "required_capability": "ALTS",
+                "client_flags": ["--use_tls=false", "--use_alts=true"],
+                "server_flags": ["--use_tls=false", "--use_alts=true"],
+            },
+        ),
+        (
+            "insecure",
+            {
+                "required_capability": "INSECURE",
+                "client_flags": ["--use_tls=false"],
+                "server_flags": ["--use_tls=false"],
+            },
+        ),
+    ]
+)
+
+_CUSTOM_CREDENTIALS_SPECS = OrderedDict(
+    [
+        (
+            "tls",
+            {
+                "required_capability": "TLS",
+                "client_flags": ["--use_tls=true"],
+            },
+        ),
+        (
+            "google_default_credentials",
+            {
+                "required_capability": "GOOGLE_DEFAULT_CREDS",
+                "client_flags": [
+                    "--custom_credentials_type=google_default_credentials"
+                ],
+            },
+        ),
+        (
+            "compute_engine_channel_creds",
+            {
+                "required_capability": "GCE_CHANNEL_CREDS",
+                "client_flags": [
+                    "--custom_credentials_type=compute_engine_channel_creds"
+                ],
+            },
+        ),
+    ]
 )
 
 _TEST_CASES = [tc["name"] for tc in _CONFIG["test_cases"]["standard"]]
@@ -162,21 +428,30 @@ _HTTP2_SERVER_TEST_CASE_SPECS = {
     tc["name"]: tc for tc in _CONFIG["test_cases"]["http2_server"]
 }
 
-TEST_CASE_REQUIRED_CAPABILITIES = {
-    tc: _parse_capability_set(caps["client"])
-    for tc, caps in _CONFIG["test_case_capabilities"].items()
-}
-SERVER_TEST_CASE_REQUIRED_CAPABILITIES = {
-    tc: _parse_capability_set(caps["server"])
-    for tc, caps in _CONFIG["test_case_capabilities"].items()
-}
+TEST_CASE_REQUIRED_CAPABILITIES = {}
+SERVER_TEST_CASE_REQUIRED_CAPABILITIES = {}
+for _tc_group in ("standard", "auth", "http2_client", "http2_server"):
+    for _tc_entry in _CONFIG["test_cases"][_tc_group]:
+        _tc_name = _tc_entry["name"]
+        _c_caps = _tc_entry.get(
+            "client_capabilities", _tc_entry.get("capabilities", [])
+        )
+        _s_caps = _tc_entry.get(
+            "server_capabilities", _tc_entry.get("capabilities", [])
+        )
+        TEST_CASE_REQUIRED_CAPABILITIES[_tc_name] = _parse_capability_set(
+            _c_caps
+        )
+        SERVER_TEST_CASE_REQUIRED_CAPABILITIES[_tc_name] = (
+            _parse_capability_set(_s_caps)
+        )
 
 TRANSPORT_SECURITY_CAPABILITIES = {}
-for ts_name, ts_cfg in _CONFIG["transport_security"].items():
+for ts_name, ts_cfg in _TRANSPORT_SECURITY_SPECS.items():
     TRANSPORT_SECURITY_CAPABILITIES[ts_name] = _parse_capability(
         ts_cfg["required_capability"]
     )
-for cc_name, cc_cfg in _CONFIG["custom_credentials_types"].items():
+for cc_name, cc_cfg in _CUSTOM_CREDENTIALS_SPECS.items():
     TRANSPORT_SECURITY_CAPABILITIES[cc_name] = _parse_capability(
         cc_cfg["required_capability"]
     )
@@ -525,6 +800,75 @@ class ExternalServerEndpoint:
         return self.name
 
 
+_LEGACY_CLASS_NAMES = (
+    "CXXLanguage",
+    "AspNetCoreLanguage",
+    "CSharpLanguage",
+    "DartLanguage",
+    "JavaLanguage",
+    "JavaOkHttpClient",
+    "GoLanguage",
+    "Http2Server",
+    "Http2Client",
+    "NodeLanguage",
+    "NodePureJSLanguage",
+    "PHP7Language",
+    "ObjcLanguage",
+    "RubyLanguage",
+    "PythonLanguage",
+    "PythonAsyncIOLanguage",
+)
+
+
+def _resolve_legacy_class_name(lang_name, safename):
+    """Derives the legacy Language/Client class name without hardcoded language keys."""
+    for target in (lang_name.lower(), (safename or lang_name).lower()):
+        for cname in _LEGACY_CLASS_NAMES:
+            stem = re.sub(r"(Language|Client)$", "", cname).lower()
+            if stem == target:
+                return cname
+    return "Language_" + (safename or lang_name)
+
+
+def _resolve_language_config(lang_name, raw_cfg, defaults_cfg):
+    """Merges language_defaults with per-language config and add/remove capability deltas."""
+    merged = copy.deepcopy(defaults_cfg or {})
+    merged.update(copy.deepcopy(raw_cfg))
+
+    if "client_capabilities" in raw_cfg:
+        client_caps = list(raw_cfg["client_capabilities"])
+    else:
+        client_caps = list((defaults_cfg or {}).get("client_capabilities", []))
+        if merged.get("auth_credentials_mode") == "flag":
+            client_caps = [
+                "AUTH_KEY_FILE_FLAG" if c == "AUTH_KEY_FILE_ENV" else c
+                for c in client_caps
+            ]
+    remove_client = set(raw_cfg.get("remove_client_capabilities", []))
+    client_caps = [c for c in client_caps if c not in remove_client]
+    for c in raw_cfg.get("add_client_capabilities", []):
+        if c not in client_caps:
+            client_caps.append(c)
+    merged["client_capabilities"] = client_caps
+
+    if "server_capabilities" in raw_cfg:
+        server_caps = list(raw_cfg["server_capabilities"])
+    else:
+        server_caps = list((defaults_cfg or {}).get("server_capabilities", []))
+    remove_server = set(raw_cfg.get("remove_server_capabilities", []))
+    server_caps = [c for c in server_caps if c not in remove_server]
+    for c in raw_cfg.get("add_server_capabilities", []):
+        if c not in server_caps:
+            server_caps.append(c)
+    merged["server_capabilities"] = server_caps
+
+    if "legacy_class_name" not in merged:
+        merged["legacy_class_name"] = _resolve_legacy_class_name(
+            lang_name, merged.get("safename", lang_name)
+        )
+    return merged
+
+
 class ConfigurableLanguage:
     """Language/endpoint configuration loaded from tools/interop/config.json."""
 
@@ -570,6 +914,42 @@ class ConfigurableLanguage:
         self._contract_http2_spec = CommandSpec.from_dict(
             contract_raw.get("http2_client")
         )
+
+        if self.docker_supported:
+            if (
+                self._contract_client_spec is None
+                and self._client_cmd_spec is not None
+            ):
+                extra_flags = [
+                    tok
+                    for tok in self._client_cmd_spec.command[1:]
+                    if tok.startswith("--use_")
+                ]
+                self._contract_client_spec = CommandSpec(
+                    command=["/interop/client"] + extra_flags,
+                    args_mode="append",
+                )
+            if (
+                self._contract_server_spec is None
+                and self._server_cmd_spec is not None
+            ):
+                srv_mode = (
+                    "ignore_args"
+                    if self._server_cmd_spec.args_mode == "ignore_args"
+                    else "append"
+                )
+                self._contract_server_spec = CommandSpec(
+                    command=["/interop/server"],
+                    args_mode=srv_mode,
+                )
+            if (
+                self._contract_http2_spec is None
+                and self._http2_client_cmd_spec is not None
+            ):
+                self._contract_http2_spec = CommandSpec(
+                    command=["/interop/http2_client"],
+                    args_mode="append",
+                )
 
         if (
             role_override == "server"
@@ -784,11 +1164,15 @@ _LANGUAGE_CLASSES = {}
 _LANGUAGES = {}
 Http2Client = None
 Http2Server = None
+_LANGUAGE_DEFAULTS = _CONFIG.get("language_defaults", {})
 
-for _lname, _lcfg in _CONFIG["languages"].items():
+for _lname, _raw_lcfg in _CONFIG["languages"].items():
+    _lcfg = _resolve_language_config(_lname, _raw_lcfg, _LANGUAGE_DEFAULTS)
     if _lcfg.get("is_http2_target"):
+        _cli_cfg = dict(_lcfg)
+        _cli_cfg["legacy_class_name"] = "Http2Client"
         Http2Client = _make_language_subclass(
-            _lname, _lcfg, role_override="client"
+            _lname, _cli_cfg, role_override="client"
         )
         _srv_cfg = dict(_lcfg)
         _srv_cfg["legacy_class_name"] = "Http2Server"
@@ -851,10 +1235,8 @@ _SERVERS_FOR_ALTS_TEST_CASES = [
     and _LANGUAGES[name].has_capability(Capability.ALTS, role="server")
 ]
 
-_TRANSPORT_SECURITY_OPTIONS = list(_CONFIG["transport_security"].keys())
-_CUSTOM_CREDENTIALS_TYPE_OPTIONS = list(
-    _CONFIG["custom_credentials_types"].keys()
-)
+_TRANSPORT_SECURITY_OPTIONS = list(_TRANSPORT_SECURITY_SPECS.keys())
+_CUSTOM_CREDENTIALS_TYPE_OPTIONS = list(_CUSTOM_CREDENTIALS_SPECS.keys())
 prod_servers = dict(_CONFIG["prod_servers"])
 
 
@@ -949,9 +1331,7 @@ def auth_options(
     cmdargs = []
     env = {}
 
-    oauth_scope_arg = "--oauth_scope=%s" % _CONFIG["defaults"].get(
-        "oauth_scope", "https://www.googleapis.com/auth/xapi.zoo"
-    )
+    oauth_scope_arg = "--oauth_scope=%s" % _OAUTH_SCOPE
     key_file_arg = "--service_account_key_file=%s" % service_account_key_file
     default_account_arg = (
         "--default_service_account=%s" % default_service_account
@@ -1026,7 +1406,7 @@ def cloud_to_prod_jobspec(
         "--server_port=443",
         "--test_case=%s" % test_case,
     ]
-    cc_cfg = _CONFIG["custom_credentials_types"].get(transport_security)
+    cc_cfg = _CUSTOM_CREDENTIALS_SPECS.get(transport_security)
     if cc_cfg and language.supports_transport_security(
         transport_security, role="client"
     ):
@@ -1129,16 +1509,8 @@ def cloud_to_cloud_jobspec(
     use_contract_entrypoints=None,
 ):
     """Creates jobspec for cloud-to-cloud interop test."""
-    interop_only_options = list(
-        _CONFIG["suites"]["cloud_to_cloud"].get(
-            "client_extra_flags",
-            [
-                "--server_host_override=foo.test.google.fr",
-                "--use_test_ca=true",
-            ],
-        )
-    )
-    ts_cfg = _CONFIG["transport_security"].get(transport_security)
+    interop_only_options = list(_C2C_CLIENT_EXTRA_FLAGS)
+    ts_cfg = _TRANSPORT_SECURITY_SPECS.get(transport_security)
     if ts_cfg:
         interop_only_options += list(ts_cfg["client_flags"])
     else:
@@ -1269,7 +1641,7 @@ def server_jobspec(
         "interop_server_%s" % language.safename
     )
     server_cmd = ["--port=%s" % _DEFAULT_SERVER_PORT]
-    ts_cfg = _CONFIG["transport_security"].get(transport_security)
+    ts_cfg = _TRANSPORT_SECURITY_SPECS.get(transport_security)
     if ts_cfg:
         server_cmd += list(ts_cfg["server_flags"])
     else:
@@ -1333,7 +1705,7 @@ def server_jobspec(
         cmdline=docker_cmdline,
         environ=environ,
         shortname="interop_server_%s" % language,
-        timeout_seconds=30 * 60,
+        timeout_seconds=_SERVER_STARTUP_TIMEOUT,
     )
     server_job.container_name = container_name
     return server_job
@@ -1351,7 +1723,7 @@ def build_interop_image_jobspec(language, tag=None):
         cmdline=["tools/run_tests/dockerize/build_interop_image.sh"],
         environ=env,
         shortname="build_docker_%s" % (language),
-        timeout_seconds=45 * 60,
+        timeout_seconds=_BUILD_IMAGE_TIMEOUT,
     )
     build_job.tag = tag
     return build_job
@@ -1508,13 +1880,7 @@ def build_interop_argparser():
         "--service_account_key_file",
         type=str,
         help="The service account key file to use for some auth interop tests.",
-        default=_CONFIG["defaults"].get(
-            "default_service_account_key_file",
-            _CONFIG["defaults"].get(
-                "service_account_key_file",
-                "/root/service_account/grpc-testing-ebe7c1ac7381.json",
-            ),
-        ),
+        default=_DEFAULT_SERVICE_ACCOUNT_KEY_FILE,
     )
     parser.add_argument(
         "--default_service_account",
@@ -1523,10 +1889,7 @@ def build_interop_argparser():
             "Default GCE service account email to use for some auth interop"
             " tests."
         ),
-        default=_CONFIG["defaults"].get(
-            "default_service_account",
-            "830293263384-compute@developer.gserviceaccount.com",
-        ),
+        default=_DEFAULT_SERVICE_ACCOUNT,
     )
     parser.add_argument(
         "-t",
@@ -2182,6 +2545,368 @@ class MatrixTestcaseProfile:
         return lines
 
 
+_MATRIX_TESTCASE_PROFILES = {
+    "csharp__master": {
+        "default_image": "grpc_interop_csharp:556faec6-de63-4493-9779-2edf51d1ef28",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45",
+        "inner_command_template": (
+            "mono Grpc.IntegrationTesting.Client.exe"
+            " --server_host={server_host} --server_port=443"
+            " --test_case={test_case} --use_tls=true"
+        ),
+    },
+    "csharp__v1.1.4": {
+        "default_image": "grpc_interop_csharp:a95229ca-d387-4127-ad48-69a7464e23b8",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug",
+        "inner_command_template": (
+            "mono Grpc.IntegrationTesting.Client.exe"
+            " --server_host={server_host} --server_host_override={server_host}"
+            " --server_port=443 --use_tls=true --test_case={test_case}"
+        ),
+    },
+    "csharp__v1.18.0": {
+        "default_image": "grpc_interop_csharp:71b05977-476b-4e57-9752-dd211c9e3741",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45",
+        "inner_command_template": (
+            "mono Grpc.IntegrationTesting.Client.exe"
+            " --server_host={server_host} --server_port=443"
+            " --test_case={test_case} --use_tls=true"
+        ),
+    },
+    "csharp__v1.20.0": {
+        "default_image": "grpc_interop_csharp:9296f21a-f657-4bb0-82a7-24fc527abcbd",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45",
+        "inner_command_template": (
+            "mono Grpc.IntegrationTesting.Client.exe"
+            " --server_host={server_host} --server_port=443"
+            " --test_case={test_case} --use_tls=true"
+        ),
+    },
+    "csharp__v1.3.9": {
+        "default_image": "grpc_interop_csharp:a95229ca-d387-4127-ad48-69a7464e23b8",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45",
+        "inner_command_template": (
+            "mono Grpc.IntegrationTesting.Client.exe"
+            " --server_host={server_host} --server_host_override={server_host}"
+            " --server_port=443 --use_tls=true --test_case={test_case}"
+        ),
+    },
+    "csharpcoreclr__master": {
+        "default_image": "grpc_interop_csharpcoreclr:69a5b092-dccd-43a6-82dd-61c100d509f5",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp3.1",
+        "inner_command_template": (
+            "dotnet exec Grpc.IntegrationTesting.Client.dll"
+            " --server_host={server_host} --server_port=443"
+            " --test_case={test_case} --use_tls=true"
+        ),
+    },
+    "csharpcoreclr__v1.1.4": {
+        "default_image": "grpc_interop_csharpcoreclr:c7fbed09-e4c1-4aab-8dd9-1285b2c9598e",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp1.0",
+        "inner_command_template": (
+            "dotnet exec Grpc.IntegrationTesting.Client.dll"
+            " --server_host={server_host} --server_host_override={server_host}"
+            " --server_port=443 --use_tls=true --test_case={test_case}"
+        ),
+    },
+    "csharpcoreclr__v1.18.0": {
+        "default_image": "grpc_interop_csharpcoreclr:bae17a7e-5450-4781-8982-e82cb89db6dd",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp1.1",
+        "inner_command_template": (
+            "dotnet exec Grpc.IntegrationTesting.Client.dll"
+            " --server_host={server_host} --server_port=443"
+            " --test_case={test_case} --use_tls=true"
+        ),
+    },
+    "csharpcoreclr__v1.20.0": {
+        "default_image": "grpc_interop_csharpcoreclr:33395965-11d7-4b12-bcd6-a272d4015207",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp2.1",
+        "inner_command_template": (
+            "dotnet exec Grpc.IntegrationTesting.Client.dll"
+            " --server_host={server_host} --server_port=443"
+            " --test_case={test_case} --use_tls=true"
+        ),
+    },
+    "csharpcoreclr__v1.3.9": {
+        "default_image": "grpc_interop_csharpcoreclr:c7fbed09-e4c1-4aab-8dd9-1285b2c9598e",
+        "workdir": "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp1.0",
+        "inner_command_template": (
+            "dotnet exec Grpc.IntegrationTesting.Client.dll"
+            " --server_host={server_host} --server_host_override={server_host}"
+            " --server_port=443 --use_tls=true --test_case={test_case}"
+        ),
+    },
+    "cxx__master": {
+        "default_image": "grpc_interop_cxx:eadcc0fd-5683-411b-aed5-084fbb3159ee",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "cmake/build/interop_client --server_host={server_host}"
+            " --server_port=443 --test_case={test_case} --use_tls=true"
+        ),
+    },
+    "cxx__v1.0.1": {
+        "default_image": "grpc_interop_cxx:78de6f80-524d-4bc9-bfb2-f00c24ceafed",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "bins/opt/interop_client --server_host={server_host}"
+            " --server_host_override={server_host} --server_port=443"
+            " --use_tls=true --test_case={test_case}"
+        ),
+    },
+    "cxx__v1.31.1": {
+        "default_image": "grpc_interop_cxx:f5a2f91d-342a-4bc8-a5ca-eb113dd3a8a2",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "bins/opt/interop_client --server_host={server_host}"
+            " --server_port=443 --test_case={test_case} --use_tls=true"
+        ),
+    },
+    "go__master": {
+        "default_image": "grpc_interop_go:fea70d36-60ef-4497-ab63-5426093a34b2",
+        "workdir": "/go/src/google.golang.org/grpc/interop/client",
+        "inner_command_template": (
+            "go run client.go --server_host={server_host} --server_port=443"
+            " --test_case={test_case} --use_tls=true"
+        ),
+        "env": {"GO111MODULE": "on"},
+    },
+    "go__v1.0.5": {
+        "default_image": "grpc_interop_go:dd8fbf3a-4964-4387-9997-5dadeea09835",
+        "workdir": "/go/src/google.golang.org/grpc/interop/client",
+        "inner_command_template": (
+            "go run client.go --server_host={server_host}"
+            " --server_host_override={server_host} --server_port=443"
+            " --use_tls=true --test_case={test_case}"
+        ),
+    },
+    "go__v1.20.0": {
+        "default_image": "grpc_interop_go:45617187-1a75-4f2f-b7af-c602d882bbc0",
+        "workdir": "/go/src/google.golang.org/grpc/interop/client",
+        "inner_command_template": (
+            "go run client.go --server_host={server_host} --server_port=443"
+            " --test_case={test_case} --use_tls=true"
+        ),
+    },
+    "java__master": {
+        "default_image": "grpc_interop_java:564ef0d0-f4d8-4611-88a9-bb6a99bf68a8",
+        "workdir": "/var/local/git/grpc/../grpc-java",
+        "inner_command_template": (
+            "./run-test-client.sh --server_host={server_host}"
+            " --server_port=443 --test_case={test_case} --use_tls=true"
+        ),
+    },
+    "java__v1.0.3": {
+        "default_image": "grpc_interop_java:a764b50c-1788-4387-9b9e-5cfa93927006",
+        "workdir": "/var/local/git/grpc/../grpc-java",
+        "inner_command_template": (
+            "./run-test-client.sh --server_host={server_host}"
+            " --server_host_override={server_host} --server_port=443"
+            " --use_tls=true --test_case={test_case}"
+        ),
+    },
+    "node__master": {
+        "default_image": "grpc_interop_node:1415ecbf-5d0f-423e-8c2c-e0cb6d154e73",
+        "workdir": "/var/local/git/grpc-node",
+        "inner_command_template": (
+            "packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh"
+            " node --require ./test/fixtures/native_native"
+            " test/interop/interop_client.js --server_host={server_host}"
+            " --server_host_override={server_host} --server_port=443"
+            " --use_tls=true --test_case={test_case}"
+        ),
+    },
+    "node__v1.0.1": {
+        "default_image": "grpc_interop_node:a53aa5e3-b548-4566-b5a8-6d15c1315b32",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "node src/node/interop/interop_client.js"
+            " --server_host={server_host} --server_host_override={server_host}"
+            " --server_port=443 --use_tls=true --test_case={test_case}"
+        ),
+        "bash_login": True,
+        "container_names": [
+            "interop_client_node_00c688f2-57da-4023-89f3-46b1f7b5869f",
+            "interop_client_node_d86705d8-14ea-4024-90b6-de74d6e8d19c",
+            "interop_client_node_ebaafacd-1d82-4a75-bea1-a5c64e01fcaf",
+            "interop_client_node_5125241a-fbf6-4c1c-895b-026a5a41f02f",
+            "interop_client_node_3d5e5b82-7205-4eba-b775-8122f05a4760",
+            "interop_client_node_16fa0b49-2083-4932-8f26-79cfdffec940",
+            "interop_client_node_23cee670-2d8d-4f5c-8893-c3c43da8b03a",
+            "interop_client_node_7b6a9454-e3b6-4993-b542-468e268930aa",
+            "interop_client_node_5a7109ed-c065-4b62-98f4-b3ed8f385762",
+            "interop_client_node_1e0ba8dd-4dc1-431b-b202-529e7ace5d1d",
+            "interop_client_node_649de56a-e722-4a59-b265-e9c0e871f068",
+            "interop_client_node_8be512a2-5e1c-4858-8cfc-82f99b678b76",
+            "interop_client_node_d19b6333-e528-48b5-8421-2ae3f7ce9dab",
+            "interop_client_node_4749c80a-21c5-4d81-9df5-3c46ba6480cd",
+            "interop_client_node_b7bee545-4857-4269-a1f2-9553dfc7e4b8",
+            "interop_client_node_4e96db87-6f48-426d-a7f0-97f3a5b6b3f4",
+            "interop_client_node_31a1d58c-f8bf-460a-af60-28969ecaaf80",
+            "interop_client_node_ce64b147-bcfa-44b2-a2f7-4a485380ce30",
+        ],
+    },
+    "node__v1.1.4": {
+        "default_image": "grpc_interop_node:1415ecbf-5d0f-423e-8c2c-e0cb6d154e73",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "tools/run_tests/interop/with_nvm.sh node"
+            " src/node/interop/interop_client.js --server_host={server_host}"
+            " --server_host_override={server_host} --server_port=443"
+            " --use_tls=true --test_case={test_case}"
+        ),
+    },
+    "php__master": {
+        "default_image": "grpc_interop_php:e00a3b45-27f0-4143-8c23-128cb4ffc46a",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "src/php/bin/interop_client.sh --server_host={server_host}"
+            " --server_port=443 --test_case={test_case} --use_tls=true"
+        ),
+    },
+    "php__v1.0.1": {
+        "default_image": "grpc_interop_php:b290f404-9940-4968-8fc2-19f5291c8eb7",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "src/php/bin/interop_client.sh --server_host={server_host}"
+            " --server_host_override={server_host} --server_port=443"
+            " --use_tls=true --test_case={test_case}"
+        ),
+    },
+    "python__master": {
+        "default_image": "grpc_interop_python:0de8fc68-43f4-4fa0-8738-1228de6ffe8c",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "py39/bin/python src/python/grpcio_tests/setup.py run_interop"
+            ' --client --args=\\"--server_host={server_host} --server_port=443'
+            ' --test_case={test_case} --use_tls=true\\"'
+        ),
+        "env": {
+            "PYTHONPATH": "/var/local/git/grpc/src/python/gens",
+            "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt",
+        },
+    },
+    "python__v1.0.x": {
+        "default_image": "grpc_interop_python:797ca293-94e8-48d4-92e9-a4d52fcfcca9",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "py27/bin/python src/python/grpcio_tests/setup.py run_interop"
+            " --client"
+            ' --args=\\"--server_host={server_host}'
+            " --server_host_override={server_host} --server_port=443"
+            ' --use_tls=true --test_case={test_case}\\"'
+        ),
+        "env": {
+            "PYTHONPATH": "/var/local/git/grpc/src/python/gens",
+            "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt",
+        },
+    },
+    "python__v1.11.1": {
+        "default_image": "grpc_interop_python:797ca293-94e8-48d4-92e9-a4d52fcfcca9",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "py27_native/bin/python src/python/grpcio_tests/setup.py"
+            " run_interop --client"
+            ' --args=\\"--server_host={server_host}'
+            " --server_host_override={server_host} --server_port=443"
+            ' --use_tls=true --test_case={test_case}\\"'
+        ),
+        "env": {
+            "PYTHONPATH": "/var/local/git/grpc/src/python/gens",
+            "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt",
+        },
+    },
+    "python__v1.18.0": {
+        "default_image": "grpc_interop_python:8f586cb2-054e-4653-91a4-3ffdc94e71fc",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "py37_native/bin/python src/python/grpcio_tests/setup.py"
+            " run_interop --client"
+            ' --args=\\"--server_host={server_host} --server_port=443'
+            ' --test_case={test_case} --use_tls=true\\"'
+        ),
+        "env": {
+            "PYTHONPATH": "/var/local/git/grpc/src/python/gens",
+            "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt",
+        },
+    },
+    "python__v1.41.1": {
+        "default_image": "grpc_interop_python:0de8fc68-43f4-4fa0-8738-1228de6ffe8c",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "py39_native/bin/python src/python/grpcio_tests/setup.py"
+            " run_interop --client"
+            ' --args=\\"--server_host={server_host} --server_port=443'
+            ' --test_case={test_case} --use_tls=true\\"'
+        ),
+        "env": {
+            "PYTHONPATH": "/var/local/git/grpc/src/python/gens",
+            "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt",
+        },
+    },
+    "ruby__master": {
+        "default_image": "grpc_interop_ruby:e60da8f6-d7e0-47d3-8bfe-330ce76077b4",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/client.rb"
+            " --server_host={server_host} --server_port=443"
+            " --test_case={test_case} --use_tls=true"
+        ),
+    },
+    "ruby__v1.0.1": {
+        "default_image": "grpc_interop_ruby:6bd1f0eb-51a4-4ad8-861c-1cbd7a929f33",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "source /usr/local/rvm/scripts/rvm && ruby"
+            " src/ruby/pb/test/client.rb --server_host={server_host}"
+            " --server_host_override={server_host} --server_port=443"
+            " --use_tls=true --test_case={test_case}"
+        ),
+    },
+    "ruby__v1.1.4": {
+        "default_image": "grpc_interop_ruby:6bd1f0eb-51a4-4ad8-861c-1cbd7a929f33",
+        "workdir": "/var/local/git/grpc",
+        "inner_command_template": (
+            "tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/client.rb"
+            " --server_host={server_host} --server_host_override={server_host}"
+            " --server_port=443 --use_tls=true --test_case={test_case}"
+        ),
+    },
+}
+
+
+def _expand_matrix_releases(mdata):
+    """Expands ordered release list + release_overrides (single tag or 'start..end' range)."""
+    releases_raw = mdata["releases"]
+    if isinstance(releases_raw, dict):
+        rel_od = OrderedDict()
+        for rtag, rentry in releases_raw.items():
+            rentry = rentry or {}
+            rel_od[rtag] = ReleaseInfo(
+                patch=rentry.get("patch"),
+                runtimes=rentry.get("runtimes"),
+                testcases_file=rentry.get("testcases_file"),
+            )
+        return rel_od
+
+    rel_od = OrderedDict((rtag, ReleaseInfo()) for rtag in releases_raw)
+    overrides = mdata.get("release_overrides", {})
+    for key, override in overrides.items():
+        if ".." in key:
+            start_tag, end_tag = key.split("..", 1)
+            start_idx = releases_raw.index(start_tag)
+            end_idx = releases_raw.index(end_tag)
+            target_tags = releases_raw[start_idx : end_idx + 1]
+        else:
+            target_tags = [key]
+        for t in target_tags:
+            rel_od[t] = ReleaseInfo(
+                patch=override.get("patch"),
+                runtimes=override.get("runtimes"),
+                testcases_file=override.get("testcases_file"),
+            )
+    return rel_od
+
+
 _MATRIX_CFG = _CONFIG["matrix"]
 
 LANG_RUNTIME_MATRIX = OrderedDict()
@@ -2192,9 +2917,11 @@ _MATRIX_ROOT_ENV_VAR = {}
 
 for _mlang, _mdata in _MATRIX_CFG["languages"].items():
     LANG_RUNTIME_MATRIX[_mlang] = list(
-        _mdata.get("default_runtimes", _mdata.get("runtimes", []))
+        _mdata.get("default_runtimes", _mdata.get("runtimes", [_mlang]))
     )
-    _MATRIX_REPOS[_mlang] = _mdata["repo"]
+    _MATRIX_REPOS[_mlang] = _mdata.get(
+        "repo", "https://github.com/grpc/grpc.git"
+    )
     _MATRIX_BUILD_FROM_RELEASE_TAG[_mlang] = bool(
         _mdata.get(
             "build_from_release_tag",
@@ -2202,28 +2929,12 @@ for _mlang, _mdata in _MATRIX_CFG["languages"].items():
         )
     )
     _MATRIX_ROOT_ENV_VAR[_mlang] = _mdata.get("root_env_var", "GRPC_ROOT")
-    _rel_od = OrderedDict()
-    _releases_raw = _mdata["releases"]
-    if isinstance(_releases_raw, dict):
-        for _rtag, _rentry in _releases_raw.items():
-            _rentry = _rentry or {}
-            _rel_od[_rtag] = ReleaseInfo(
-                patch=_rentry.get("patch"),
-                runtimes=_rentry.get("runtimes"),
-                testcases_file=_rentry.get("testcases_file"),
-            )
-    else:
-        for _rentry in _releases_raw:
-            _rtag = _rentry["tag"]
-            _rel_od[_rtag] = ReleaseInfo(
-                patch=_rentry.get("patch"),
-                runtimes=_rentry.get("runtimes"),
-                testcases_file=_rentry.get("testcases_file"),
-            )
-    LANG_RELEASE_MATRIX[_mlang] = _rel_od
+    LANG_RELEASE_MATRIX[_mlang] = _expand_matrix_releases(_mdata)
 
+_RAW_PROFILES = dict(_MATRIX_TESTCASE_PROFILES)
+_RAW_PROFILES.update(_MATRIX_CFG.get("testcase_profiles", {}))
 _MATRIX_PROFILES = {}
-for _pname, _pdata in _MATRIX_CFG.get("testcase_profiles", {}).items():
+for _pname, _pdata in _RAW_PROFILES.items():
     _MATRIX_PROFILES[_pname] = MatrixTestcaseProfile(
         name=_pname,
         default_image=_pdata.get("default_image"),
@@ -2278,13 +2989,10 @@ def resolve_testcases_filename(lang, runtime, release):
     if not testcases_file:
         testcases_file = "%s__master" % lang
 
-    overrides = _MATRIX_CFG.get("runtime_testcases_prefix_overrides", {})
-    if runtime in overrides:
-        rule = overrides[runtime]
-        if rule.get("lang") == lang:
-            testcases_file = testcases_file.replace(
-                rule["replace_from"], rule["replace_to"]
-            )
+    if runtime != lang:
+        alt_file = testcases_file.replace("%s__" % lang, "%s__" % runtime, 1)
+        if alt_file in _MATRIX_PROFILES:
+            testcases_file = alt_file
     return testcases_file
 
 
@@ -2357,12 +3065,8 @@ def generate_test_case_jobspecs(
         release,
         use_contract_entrypoints=use_contract_entrypoints,
     )
-    timeout_sec = int(_MATRIX_CFG.get("test_timeout_seconds", 60))
-    flake_retries = (
-        int(_CONFIG["defaults"].get("matrix_flake_retries", 5))
-        if allow_flakes
-        else 0
-    )
+    timeout_sec = _MATRIX_TEST_TIMEOUT
+    flake_retries = _MATRIX_FLAKE_RETRIES if allow_flakes else 0
 
     job_spec_list = []
     for line in testcase_lines:
@@ -2405,7 +3109,7 @@ def generate_test_case_jobspecs(
 
 def pull_image_for_lang(lang, image, release):
     """Pull an image for a given language from the image registry."""
-    pull_timeout = int(_MATRIX_CFG.get("pull_image_timeout_seconds", 15 * 60))
+    pull_timeout = _MATRIX_PULL_IMAGE_TIMEOUT
     cmdline = [
         "time gcloud docker -- pull %s && time docker run --rm=true %s"
         " /bin/true" % (image, image)
@@ -2464,7 +3168,7 @@ def build_matrix_image_jobspec(
     """Build interop docker image for a language with runtime."""
     basename = "grpc_interop_%s" % runtime
     tag = "%s/%s:%s" % (docker_path, basename, gcr_tag)
-    timeout_sec = int(_MATRIX_CFG.get("build_image_timeout_seconds", 30 * 60))
+    timeout_sec = _MATRIX_BUILD_IMAGE_TIMEOUT
     build_env = {"INTEROP_IMAGE": tag, "BASE_NAME": basename}
     build_env.update(env)
     image_builder_path = image_builder_script
@@ -2603,10 +3307,7 @@ def build_matrix_build_argparser():
     parser.add_argument(
         "--gcr_path",
         "--docker_path",
-        default=_MATRIX_CFG.get(
-            "default_docker_path",
-            "us-docker.pkg.dev/grpc-testing/testing-images-public",
-        ),
+        default=_MATRIX_DEFAULT_DOCKER_PATH,
         dest="docker_path",
         help="Path of registry where the images are stored",
     )
@@ -2653,9 +3354,7 @@ def build_matrix_build_argparser():
     )
     parser.add_argument(
         "--git_checkout_root",
-        default=_MATRIX_CFG.get(
-            "default_git_checkout_root", "/export/hda3/tmp/grpc_matrix"
-        ),
+        default=_MATRIX_DEFAULT_GIT_CHECKOUT_ROOT,
         help="Folder under which grpc-go/java/main repo will be cloned. "
         "Valid only with --git_checkout.",
     )
@@ -2677,10 +3376,7 @@ def build_matrix_test_argparser():
     parser.add_argument(
         "--gcr_path",
         "--docker_path",
-        default=_MATRIX_CFG.get(
-            "default_docker_path",
-            "us-docker.pkg.dev/grpc-testing/testing-images-public",
-        ),
+        default=_MATRIX_DEFAULT_DOCKER_PATH,
         dest="docker_path",
         help="Path of docker images in Google Container Registry",
     )
@@ -2706,7 +3402,7 @@ def build_matrix_test_argparser():
     )
     parser.add_argument(
         "--report_file",
-        default=_REPORTS_CFG.get("matrix_xml", "report.xml"),
+        default=_MATRIX_XML_REPORT,
         help="The result file to create.",
     )
     parser.add_argument(
@@ -2728,7 +3424,7 @@ def build_matrix_test_argparser():
     )
     parser.add_argument(
         "--server_host",
-        default=_MATRIX_CFG.get("default_server_host", "74.125.206.210"),
+        default=_MATRIX_DEFAULT_SERVER_HOST,
         type=str,
         nargs="?",
         help="The gateway to backend services.",
