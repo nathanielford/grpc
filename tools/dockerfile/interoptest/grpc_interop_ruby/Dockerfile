@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM debian:11
+ARG BASE_IMAGE=base
+FROM debian:11 AS base
 
 #=================
 # Basic C core dependencies
@@ -134,3 +135,17 @@ RUN mkdir /var/local/jenkins
 
 # Define the default command.
 CMD ["bash"]
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+ARG GRPC_BUILD_ENABLE_CCACHE=""
+ARG CCACHE_SECONDARY_STORAGE=""
+LABEL release="${RELEASE_LABEL}"
+COPY --from=service_account . /root/service_account/
+COPY --from=build_info . /var/local/build_info/
+COPY --from=grpc . /var/local/git/grpc
+RUN /bin/bash -l -c "cd /var/local/git/grpc && rvm --default use ruby-3.1.3 && cd src/ruby && gem install bundler && bundle && bundle exec rake compile"
+RUN mkdir -p /interop \
+  && printf '#!/bin/bash\ncd /var/local/git/grpc && exec tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/client.rb "$@"\n' > /interop/client \
+  && printf '#!/bin/bash\ncd /var/local/git/grpc && exec tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/server.rb "$@"\n' > /interop/server \
+  && chmod +x /interop/client /interop/server

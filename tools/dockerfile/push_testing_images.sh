@@ -120,8 +120,12 @@ do
 
   if [ ! -e "$DOCKERFILE_DIR/Dockerfile" ]; then
     continue
+  elif grep -q '^#=== INTEROP_BUILD_STAGE ===$' "$DOCKERFILE_DIR/Dockerfile"; then
+    DOCKER_IMAGE_TAG=$(sed -e '/^ARG BASE_IMAGE=base$/d' -e 's/^\(FROM .*\) AS base$/\1/' -e '/^#=== INTEROP_BUILD_STAGE ===$/,$d' "$DOCKERFILE_DIR/Dockerfile" | sha1sum | cut -f1 -d\ )
+    DOCKER_BUILD_TARGET_ARGS=(--target base)
   else
     DOCKER_IMAGE_TAG=$(sha1sum $DOCKERFILE_DIR/Dockerfile | cut -f1 -d\ )
+    DOCKER_BUILD_TARGET_ARGS=()
   fi
 
   # Skip if DOCKERFILE_DIR is in EXCLUDE_DIRS
@@ -239,6 +243,7 @@ do
   docker_exit_code=0
   docker build \
     ${ALWAYS_BUILD:+--no-cache --pull} \
+    "${DOCKER_BUILD_TARGET_ARGS[@]}" \
     -t ${ARTIFACT_REGISTRY_PREFIX}/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG} \
     -t ${ARTIFACT_REGISTRY_PREFIX}/${DOCKER_IMAGE_NAME}:infrastructure-public-image-${DOCKER_IMAGE_TAG} \
     ${DOCKERFILE_DIR} || docker_exit_code=$?

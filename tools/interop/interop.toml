@@ -1,0 +1,3522 @@
+# Copyright 2026 gRPC authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# =============================================================================
+# gRPC Interop Testing Configuration (Single Source of Truth)
+# Parsed using Python 3.11+ standard library `tomllib` (zero external deps).
+# =============================================================================
+
+[defaults]
+default_server_port = 8080
+prod_port = 443
+server_host_override = "foo.test.google.fr"
+docker_workdir_root = "/var/local/git/grpc"
+test_timeout_seconds = 180
+server_timeout_seconds = 1800
+server_healthy_timeout_seconds = 600
+image_build_timeout_seconds = 2700
+docker_build_xml_report = "interop_docker_build/sponge_log.xml"
+tests_xml_report = "interop_test/sponge_log.xml"
+server_manual_cmd_log_file = "interop_server_cmds.sh"
+client_manual_cmd_log_file = "interop_client_cmds.sh"
+build_script = "tools/run_tests/dockerize/build_interop_image.sh"
+default_service_account_key_file = "/root/service_account/grpc-testing-ebe7c1ac7381.json"
+default_service_account = "830293263384-compute@developer.gserviceaccount.com"
+default_oauth_scope = "https://www.googleapis.com/auth/xapi.zoo"
+orca_service_config_json = '{"loadBalancingConfig":[{"test_backend_metrics_load_balancer":{}}]}'
+
+[prod_servers]
+default = "grpc-test.sandbox.googleapis.com"
+gateway_v4 = "grpc-test4.sandbox.googleapis.com"
+
+[transport_security.tls]
+flags = ["--use_tls=true"]
+supports_cloud_to_prod = true
+
+[transport_security.alts]
+flags = ["--use_tls=false", "--use_alts=true"]
+supports_cloud_to_prod = false
+
+[transport_security.insecure]
+flags = ["--use_tls=false"]
+supports_cloud_to_prod = false
+
+[custom_credentials_types.tls]
+flags = ["--use_tls=true"]
+
+[custom_credentials_types.google_default_credentials]
+flags = ["--custom_credentials_type=google_default_credentials"]
+
+[custom_credentials_types.compute_engine_channel_creds]
+flags = ["--custom_credentials_type=compute_engine_channel_creds"]
+
+[suites]
+test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+]
+
+cloud_to_prod_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+]
+
+auth_test_cases = [
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+]
+
+http2_test_cases = [
+    "tls",
+    "framing",
+]
+
+http2_server_test_cases = [
+    "rst_after_header",
+    "rst_after_data",
+    "rst_during_data",
+    "goaway",
+    "ping",
+    "max_streams",
+    "data_frame_padding",
+    "no_df_padding_sanity_test",
+]
+
+orca_test_cases = [
+    "orca_per_rpc",
+    "orca_oob",
+]
+
+transport_security_options = ["tls", "alts", "insecure"]
+custom_credentials_type_options = [
+    "tls",
+    "google_default_credentials",
+    "compute_engine_channel_creds",
+]
+
+[suites.http2_server_grpc_client_map]
+data_frame_padding = "large_unary"
+no_df_padding_sanity_test = "large_unary"
+
+# =============================================================================
+# Test Case Metadata
+# =============================================================================
+
+[test_cases.compute_engine_creds]
+category = "auth"
+transport_security = "tls"
+requires_compute_engine_creds = true
+uses_key_file = false
+uses_oauth_scope = true
+uses_default_service_account = true
+
+[test_cases.jwt_token_creds]
+category = "auth"
+transport_security = "tls"
+requires_compute_engine_creds = false
+uses_key_file = true
+uses_oauth_scope = false
+uses_default_service_account = false
+
+[test_cases.oauth2_auth_token]
+category = "auth"
+transport_security = "tls"
+requires_compute_engine_creds = false
+uses_key_file = true
+uses_oauth_scope = true
+uses_default_service_account = false
+
+[test_cases.per_rpc_creds]
+category = "auth"
+transport_security = "tls"
+requires_compute_engine_creds = false
+uses_key_file = true
+uses_oauth_scope = true
+uses_default_service_account = false
+
+[test_cases.google_default_credentials]
+category = "auth"
+transport_security = "google_default_credentials"
+requires_compute_engine_creds = false
+uses_key_file = false
+uses_key_file_when_flag_enabled = true
+uses_oauth_scope = false
+uses_default_service_account = true
+
+[test_cases.compute_engine_channel_credentials]
+category = "auth"
+transport_security = "compute_engine_channel_creds"
+requires_compute_engine_creds = false
+uses_key_file = false
+uses_oauth_scope = false
+uses_default_service_account = true
+
+# =============================================================================
+# Language Definitions
+# =============================================================================
+
+[languages."c++"]
+class_name = "CXXLanguage"
+safename = "cxx"
+included_in_languages = true
+included_in_all = true
+runs_in_docker = true
+is_server = true
+server_choosable = true
+supports_alts = true
+supports_http2_server_interop = true
+supports_http2_badclient_interop = true
+client_cmd = ["cmake/build/interop_client"]
+server_cmd = ["cmake/build/interop_server"]
+http2_client_cmd = ["cmake/build/http2_client"]
+args_mode = "list"
+auth_creds_mode = "flag"
+oauth2_uses_gce_creds = true
+supported_custom_credentials_types = ["tls", "google_default_credentials"]
+unimplemented_client_test_cases = [
+    "data_frame_padding",
+    "special_status_message",
+    "compute_engine_channel_credentials",
+]
+unimplemented_server_test_cases = []
+client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "orca_per_rpc",
+    "orca_oob",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "google_default_credentials",
+    "rst_after_header",
+    "rst_after_data",
+    "rst_during_data",
+    "goaway",
+    "ping",
+    "max_streams",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+    "tls",
+    "framing",
+]
+[languages."c++".global_env]
+[languages."c++".cloud_to_prod_env]
+
+[languages.aspnetcore]
+class_name = "AspNetCoreLanguage"
+class_aliases = ["CSharpAspNetCoreLanguage"]
+safename = "aspnetcore"
+included_in_languages = true
+included_in_all = true
+runs_in_docker = true
+is_server = true
+server_choosable = true
+supports_alts = false
+supports_http2_server_interop = false
+supports_http2_badclient_interop = true
+client_cwd = "../grpc-dotnet/output/InteropTestsClient"
+server_cwd = "../grpc-dotnet/output/InteropTestsWebsite"
+client_cmd = ["dotnet", "exec", "InteropTestsClient.dll"]
+server_cmd = ["dotnet", "exec", "InteropTestsWebsite.dll"]
+args_mode = "list"
+auth_creds_mode = "env"
+oauth2_uses_gce_creds = false
+supported_custom_credentials_types = ["tls"]
+unimplemented_client_test_cases = [
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "orca_per_rpc",
+    "orca_oob",
+]
+unimplemented_server_test_cases = [
+    "orca_per_rpc",
+    "orca_oob",
+]
+client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "data_frame_padding",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "tls",
+    "framing",
+]
+[languages.aspnetcore.global_env]
+[languages.aspnetcore.cloud_to_prod_env]
+
+[languages.dart]
+class_name = "DartLanguage"
+safename = "dart"
+included_in_languages = true
+included_in_all = true
+runs_in_docker = true
+is_server = true
+server_choosable = true
+supports_alts = false
+supports_http2_server_interop = false
+supports_http2_badclient_interop = true
+client_cwd = "../grpc-dart/interop"
+server_cwd = "../grpc-dart/interop"
+http2_cwd = "../grpc-dart/interop"
+client_cmd = ["dart", "bin/client.dart"]
+server_cmd = ["dart", "bin/server.dart"]
+args_mode = "list"
+auth_creds_mode = "flag"
+oauth2_uses_gce_creds = false
+supported_custom_credentials_types = ["tls"]
+unimplemented_client_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "special_status_message",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "orca_per_rpc",
+    "orca_oob",
+]
+unimplemented_server_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+]
+client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "unimplemented_service",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "data_frame_padding",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "unimplemented_service",
+    "tls",
+    "framing",
+]
+[languages.dart.global_env]
+[languages.dart.cloud_to_prod_env]
+
+[languages.go]
+class_name = "GoLanguage"
+safename = "go"
+included_in_languages = true
+included_in_all = true
+runs_in_docker = true
+is_server = true
+server_choosable = true
+supports_alts = true
+supports_http2_server_interop = true
+supports_http2_badclient_interop = false
+client_cwd = "/go/src/google.golang.org/grpc/interop/client"
+server_cwd = "/go/src/google.golang.org/grpc/interop/server"
+http2_cwd = "/go/src/google.golang.org/grpc/interop/http2"
+client_cmd = ["go", "run", "client.go"]
+server_cmd = ["go", "run", "server.go"]
+http2_client_cmd = ["go", "run", "negative_http2_client.go"]
+args_mode = "list"
+auth_creds_mode = "flag"
+oauth2_uses_gce_creds = false
+supported_custom_credentials_types = [
+    "tls",
+    "google_default_credentials",
+    "compute_engine_channel_creds",
+]
+unimplemented_client_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+]
+unimplemented_server_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+]
+client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "rst_after_header",
+    "rst_after_data",
+    "rst_during_data",
+    "goaway",
+    "ping",
+    "max_streams",
+    "data_frame_padding",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+]
+[languages.go.global_env]
+GO111MODULE = "on"
+[languages.go.cloud_to_prod_env]
+
+[languages.java]
+class_name = "JavaLanguage"
+safename = "java"
+included_in_languages = true
+included_in_all = true
+runs_in_docker = true
+is_server = true
+server_choosable = true
+supports_alts = true
+supports_http2_server_interop = true
+supports_http2_badclient_interop = true
+client_cwd = "../grpc-java"
+server_cwd = "../grpc-java"
+http2_cwd = "../grpc-java"
+client_cmd = ["./run-test-client.sh"]
+server_cmd = ["./run-test-server.sh"]
+http2_client_cmd = ["./interop-testing/build/install/grpc-interop-testing/bin/http2-client"]
+args_mode = "list"
+auth_creds_mode = "flag"
+oauth2_uses_gce_creds = false
+supported_custom_credentials_types = [
+    "tls",
+    "google_default_credentials",
+    "compute_engine_channel_creds",
+]
+unimplemented_client_test_cases = []
+unimplemented_server_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+]
+client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "rst_after_header",
+    "rst_after_data",
+    "rst_during_data",
+    "goaway",
+    "ping",
+    "max_streams",
+    "data_frame_padding",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "server_compressed_unary",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+    "tls",
+    "framing",
+]
+[languages.java.global_env]
+[languages.java.cloud_to_prod_env]
+
+[languages.javaokhttp]
+class_name = "JavaOkHttpClient"
+safename = "java"
+included_in_languages = true
+included_in_all = true
+runs_in_docker = true
+is_server = false
+server_choosable = false
+supports_alts = false
+supports_http2_server_interop = false
+supports_http2_badclient_interop = false
+client_cwd = "../grpc-java"
+client_cmd = ["./run-test-client.sh", "--use_okhttp=true"]
+args_mode = "list"
+auth_creds_mode = "flag"
+oauth2_uses_gce_creds = false
+supported_custom_credentials_types = [
+    "tls",
+    "google_default_credentials",
+    "compute_engine_channel_creds",
+]
+unimplemented_client_test_cases = [
+    "data_frame_padding",
+]
+unimplemented_server_test_cases = []
+client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = []
+[languages.javaokhttp.global_env]
+[languages.javaokhttp.cloud_to_prod_env]
+
+[languages.node]
+class_name = "NodeLanguage"
+safename = "node"
+included_in_languages = true
+included_in_all = true
+runs_in_docker = true
+is_server = true
+server_choosable = true
+supports_alts = false
+supports_http2_server_interop = false
+supports_http2_badclient_interop = true
+client_cwd = "../../../../home/appuser/grpc-node"
+server_cwd = "../../../../home/appuser/grpc-node"
+client_cmd = [
+    "packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh",
+    "node",
+    "--require",
+    "./test/fixtures/native_native",
+    "test/interop/interop_client.js",
+]
+server_cmd = [
+    "packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh",
+    "node",
+    "--require",
+    "./test/fixtures/native_native",
+    "test/interop/interop_server.js",
+]
+args_mode = "list"
+auth_creds_mode = "env"
+oauth2_uses_gce_creds = false
+supported_custom_credentials_types = ["tls"]
+unimplemented_client_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "data_frame_padding",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "orca_per_rpc",
+    "orca_oob",
+]
+unimplemented_server_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "orca_per_rpc",
+    "orca_oob",
+]
+client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "unimplemented_service",
+    "special_status_message",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "unimplemented_service",
+    "special_status_message",
+    "tls",
+    "framing",
+]
+[languages.node.global_env]
+[languages.node.cloud_to_prod_env]
+
+[languages.nodepurejs]
+class_name = "NodePureJSLanguage"
+safename = "nodepurejs"
+included_in_languages = true
+included_in_all = true
+runs_in_docker = true
+is_server = false
+server_choosable = false
+supports_alts = false
+supports_http2_server_interop = false
+supports_http2_badclient_interop = false
+client_cwd = "../../../../home/appuser/grpc-node"
+server_cwd = "../../../../home/appuser/grpc-node"
+client_cmd = [
+    "packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh",
+    "node",
+    "--require",
+    "./test/fixtures/js_js",
+    "test/interop/interop_client.js",
+]
+args_mode = "list"
+auth_creds_mode = "env"
+oauth2_uses_gce_creds = false
+supported_custom_credentials_types = ["tls"]
+unimplemented_client_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "data_frame_padding",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "orca_per_rpc",
+    "orca_oob",
+]
+unimplemented_server_test_cases = [
+    "orca_per_rpc",
+    "orca_oob",
+]
+client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "unimplemented_service",
+    "special_status_message",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = []
+[languages.nodepurejs.global_env]
+[languages.nodepurejs.cloud_to_prod_env]
+
+[languages.php7]
+class_name = "PHP7Language"
+class_aliases = ["PHPLanguage"]
+safename = "php7"
+included_in_languages = true
+included_in_all = true
+runs_in_docker = true
+is_server = true
+server_choosable = true
+supports_alts = false
+supports_http2_server_interop = false
+supports_http2_badclient_interop = true
+client_cmd = ["src/php/bin/interop_client.sh"]
+server_cmd = ["src/php/bin/interop_server.sh"]
+args_mode = "list"
+auth_creds_mode = "env"
+oauth2_uses_gce_creds = false
+supported_custom_credentials_types = ["tls"]
+unimplemented_client_test_cases = [
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "data_frame_padding",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "orca_per_rpc",
+    "orca_oob",
+]
+unimplemented_server_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "orca_per_rpc",
+    "orca_oob",
+]
+client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "unimplemented_service",
+    "special_status_message",
+    "tls",
+    "framing",
+]
+[languages.php7.global_env]
+[languages.php7.cloud_to_prod_env]
+
+[languages.objc]
+class_name = "ObjcLanguage"
+class_aliases = ["ObjCLanguage"]
+safename = "objc"
+included_in_languages = true
+included_in_all = false
+runs_in_docker = false
+is_server = false
+server_choosable = false
+supports_alts = false
+supports_http2_server_interop = false
+supports_http2_badclient_interop = false
+single_invocation_suite = true
+client_cwd = "src/objective-c/tests"
+client_cmd = []
+xcode_cmd_template = 'pod install && xcodebuild -workspace Tests.xcworkspace -scheme InteropTestsLocalSSL -destination name="iPhone 6" HOST_PORT_LOCALSSL=localhost:%s test'
+args_mode = "objc_xcode"
+auth_creds_mode = "flag"
+oauth2_uses_gce_creds = false
+supported_custom_credentials_types = ["tls"]
+unimplemented_client_test_cases = [
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "data_frame_padding",
+    "special_status_message",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "orca_per_rpc",
+    "orca_oob",
+]
+unimplemented_server_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "orca_per_rpc",
+    "orca_oob",
+]
+client_test_cases = [
+    "large_unary",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = []
+[languages.objc.global_env]
+[languages.objc.cloud_to_prod_env]
+
+[languages.ruby]
+class_name = "RubyLanguage"
+safename = "ruby"
+included_in_languages = true
+included_in_all = true
+runs_in_docker = true
+is_server = true
+server_choosable = true
+supports_alts = false
+supports_http2_server_interop = false
+supports_http2_badclient_interop = true
+client_cmd = [
+    "tools/run_tests/interop/with_rvm.sh",
+    "ruby",
+    "src/ruby/pb/test/client.rb",
+]
+server_cmd = [
+    "tools/run_tests/interop/with_rvm.sh",
+    "ruby",
+    "src/ruby/pb/test/server.rb",
+]
+args_mode = "list"
+auth_creds_mode = "env"
+oauth2_uses_gce_creds = false
+supported_custom_credentials_types = ["tls"]
+unimplemented_client_test_cases = [
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "data_frame_padding",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "orca_per_rpc",
+    "orca_oob",
+]
+unimplemented_server_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "orca_per_rpc",
+    "orca_oob",
+]
+client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "unimplemented_service",
+    "special_status_message",
+    "tls",
+    "framing",
+]
+[languages.ruby.global_env]
+[languages.ruby.cloud_to_prod_env]
+
+[languages.python]
+class_name = "PythonLanguage"
+safename = "python"
+included_in_languages = true
+included_in_all = true
+runs_in_docker = true
+is_server = true
+server_choosable = true
+supports_alts = true
+supports_http2_server_interop = true
+supports_http2_badclient_interop = true
+client_cmd = [
+    "py39/bin/python",
+    "src/python/grpcio_tests/setup.py",
+    "run_interop",
+    "--client",
+]
+server_cmd = [
+    "py39/bin/python",
+    "src/python/grpcio_tests/setup.py",
+    "run_interop",
+    "--server",
+]
+http2_client_cmd = [
+    "py39/bin/python",
+    "src/python/grpcio_tests/tests/http2/negative_http2_client.py",
+]
+args_mode = "setup_py_quoted"
+auth_creds_mode = "env"
+oauth2_uses_gce_creds = false
+supported_custom_credentials_types = ["tls"]
+unimplemented_client_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "data_frame_padding",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "orca_per_rpc",
+    "orca_oob",
+]
+unimplemented_server_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "orca_per_rpc",
+    "orca_oob",
+]
+client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "unimplemented_service",
+    "special_status_message",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "rst_after_header",
+    "rst_after_data",
+    "rst_during_data",
+    "goaway",
+    "ping",
+    "max_streams",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "unimplemented_service",
+    "special_status_message",
+    "tls",
+    "framing",
+]
+[languages.python.global_env]
+LD_LIBRARY_PATH = "/var/local/git/grpc/libs/opt"
+PYTHONPATH = "/var/local/git/grpc/src/python/gens"
+[languages.python.cloud_to_prod_env]
+
+[languages.pythonasyncio]
+class_name = "PythonAsyncIOLanguage"
+class_aliases = ["PythonAsyncioLanguage"]
+safename = "pythonasyncio"
+included_in_languages = true
+included_in_all = true
+runs_in_docker = true
+is_server = false
+server_choosable = true
+supports_alts = false
+supports_http2_server_interop = false
+supports_http2_badclient_interop = false
+client_cmd = [
+    "py39/bin/python",
+    "src/python/grpcio_tests/setup.py",
+    "run_interop",
+    "--use-asyncio",
+    "--client",
+]
+server_cmd = [
+    "py39/bin/python",
+    "src/python/grpcio_tests/setup.py",
+    "run_interop",
+    "--use-asyncio",
+    "--server",
+]
+http2_client_cmd = [
+    "py39/bin/python",
+    "src/python/grpcio_tests/tests/http2/negative_http2_client.py",
+]
+args_mode = "setup_py_quoted"
+auth_creds_mode = "env"
+oauth2_uses_gce_creds = false
+supported_custom_credentials_types = ["tls"]
+unimplemented_client_test_cases = [
+    "client_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_unary",
+    "server_compressed_streaming",
+    "data_frame_padding",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "timeout_on_sleeping_server",
+    "orca_per_rpc",
+    "orca_oob",
+]
+unimplemented_server_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+    "compute_engine_creds",
+    "jwt_token_creds",
+    "oauth2_auth_token",
+    "per_rpc_creds",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+    "tls",
+    "framing",
+    "rst_after_header",
+    "rst_after_data",
+    "rst_during_data",
+    "goaway",
+    "ping",
+    "max_streams",
+    "data_frame_padding",
+    "no_df_padding_sanity_test",
+]
+client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "unimplemented_service",
+    "special_status_message",
+    "no_df_padding_sanity_test",
+]
+server_test_cases = []
+[languages.pythonasyncio.global_env]
+LD_LIBRARY_PATH = "/var/local/git/grpc/libs/opt"
+PYTHONPATH = "/var/local/git/grpc/src/python/gens"
+[languages.pythonasyncio.cloud_to_prod_env]
+
+# =============================================================================
+# HTTP/2 Endpoints (Bad Client & Bad Server Emulators)
+# =============================================================================
+
+[http2_endpoints.client]
+name = "http2"
+class_name = "Http2Client"
+safename = "http2"
+runs_in_docker = true
+client_cmd = ["tools/http2_interop/http2_interop.test", "-test.v"]
+args_mode = "list"
+unimplemented_client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+    "special_status_message",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+]
+unimplemented_server_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+]
+[http2_endpoints.client.global_env]
+[http2_endpoints.client.cloud_to_prod_env]
+
+[http2_endpoints.server]
+name = "http2"
+class_name = "Http2Server"
+safename = "http2"
+runs_in_docker = true
+server_cmd = ["python test/http2_test/http2_test_server.py"]
+args_mode = "ignore"
+server_port_count = 8
+server_health_cmd = "python test/http2_test/http2_server_health_check.py --server_host=localhost --server_port=8080"
+server_health_interval = "1s"
+server_health_retries = "5"
+server_health_timeout = "10s"
+unimplemented_client_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+    "data_frame_padding",
+    "special_status_message",
+    "google_default_credentials",
+    "compute_engine_channel_credentials",
+]
+unimplemented_server_test_cases = [
+    "large_unary",
+    "empty_unary",
+    "ping_pong",
+    "empty_stream",
+    "client_streaming",
+    "server_streaming",
+    "cancel_after_begin",
+    "cancel_after_first_response",
+    "timeout_on_sleeping_server",
+    "custom_metadata",
+    "status_code_and_message",
+    "unimplemented_method",
+    "client_compressed_unary",
+    "server_compressed_unary",
+    "client_compressed_streaming",
+    "server_compressed_streaming",
+    "unimplemented_service",
+    "special_status_message",
+    "orca_per_rpc",
+    "orca_oob",
+]
+[http2_endpoints.server.global_env]
+[http2_endpoints.server.cloud_to_prod_env]
+
+# =============================================================================
+# Backwards-Compatibility Matrix Configuration
+# =============================================================================
+
+[matrix.defaults]
+docker_path = "us-docker.pkg.dev/grpc-testing/testing-images-public"
+git_checkout_root = "/export/hda3/tmp/grpc_matrix"
+default_repo = "https://github.com/grpc/grpc.git"
+default_root_env_var = "GRPC_ROOT"
+server_host = "74.125.206.210"
+report_file = "report.xml"
+junit_suite_package = "grpc_interop_matrix"
+build_info_dir = "/var/local/build_info"
+test_timeout_seconds = 60
+pull_image_timeout_seconds = 900
+max_parallel_downloads = 6
+build_timeout_seconds = 1800
+prod_hosts = ["grpc-test.sandbox.googleapis.com", "grpc-test4.sandbox.googleapis.com"]
+
+[matrix.extra_repos]
+dart = "https://github.com/grpc/grpc-dart.git"
+go = "https://github.com/grpc/grpc-go.git"
+java = "https://github.com/grpc/grpc-java.git"
+node = "https://github.com/grpc/grpc-node.git"
+
+[matrix.languages.cxx]
+repo = "https://github.com/grpc/grpc.git"
+build_from_release_tag = true
+root_env_var = "GRPC_ROOT"
+default_runtimes = ["cxx"]
+default_profile = "cxx__master"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.0.1"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.1.4"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.2.5"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.3.9"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.4.2"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.6.6"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.7.2"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.8.0"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.9.1"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.10.1"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.11.1"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.12.0"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.13.0"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.14.1"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.15.0"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.16.0"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.17.1"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.18.0"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.19.0"
+testcases_file = "cxx__v1.0.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.20.0"
+testcases_file = "cxx__v1.31.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.21.4"
+testcases_file = "cxx__v1.31.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.22.0"
+testcases_file = "cxx__v1.31.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.22.1"
+testcases_file = "cxx__v1.31.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.23.0"
+testcases_file = "cxx__v1.31.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.24.0"
+testcases_file = "cxx__v1.31.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.25.0"
+testcases_file = "cxx__v1.31.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.26.0"
+testcases_file = "cxx__v1.31.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.27.3"
+testcases_file = "cxx__v1.31.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.30.0"
+testcases_file = "cxx__v1.31.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.31.1"
+testcases_file = "cxx__v1.31.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.32.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.33.2"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.34.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.35.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.36.3"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.37.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.38.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.39.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.41.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.42.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.43.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.44.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.46.2"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.47.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.48.3"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.49.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.52.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.53.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.54.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.55.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.56.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.57.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.58.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.60.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.61.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.62.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.63.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.64.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.65.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.66.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.67.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.69.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.70.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.71.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.72.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.73.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.74.0"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.75.1"
+
+[[matrix.languages.cxx.releases]]
+tag = "v1.76.0"
+
+[matrix.languages.go]
+repo = "https://github.com/grpc/grpc-go.git"
+build_from_release_tag = false
+root_env_var = "GRPC_GO_ROOT"
+default_runtimes = ["go1.x"]
+default_profile = "go__master"
+
+[[matrix.languages.go.releases]]
+tag = "v1.0.5"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.2.1"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.3.0"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.4.2"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.5.2"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.6.0"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.7.4"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.8.2"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.9.2"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.10.1"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.11.3"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.12.2"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.13.0"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.14.0"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.15.0"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.16.0"
+runtimes = ["go1.8"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.17.0"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.18.0"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.19.0"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.0.5"
+
+[[matrix.languages.go.releases]]
+tag = "v1.20.0"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.21.3"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.22.3"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.23.1"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.24.0"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.25.0"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.26.0"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.27.1"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.28.0"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.29.0"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.30.0"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.31.1"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.32.0"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.33.1"
+runtimes = ["go1.11"]
+testcases_file = "go__v1.20.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.34.0"
+runtimes = ["go1.11"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.35.0"
+runtimes = ["go1.11"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.36.0"
+runtimes = ["go1.11"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.37.0"
+runtimes = ["go1.11"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.38.1"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.39.1"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.40.0"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.41.0"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.42.0"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.43.0"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.44.0"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.45.0"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.46.0"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.47.0"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.48.0"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.49.0"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.50.1"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.51.0"
+runtimes = ["go1.16"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.52.3"
+runtimes = ["go1.19"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.53.0"
+runtimes = ["go1.19"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.54.1"
+runtimes = ["go1.19"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.55.0"
+runtimes = ["go1.19"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.56.3"
+runtimes = ["go1.19"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.57.2"
+runtimes = ["go1.19"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.58.3"
+runtimes = ["go1.19"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.59.0"
+runtimes = ["go1.19"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.60.1"
+runtimes = ["go1.19"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.61.2"
+runtimes = ["go1.19"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.62.2"
+runtimes = ["go1.19"]
+
+[[matrix.languages.go.releases]]
+tag = "v1.63.3"
+
+[[matrix.languages.go.releases]]
+tag = "v1.64.1"
+
+[[matrix.languages.go.releases]]
+tag = "v1.65.1"
+
+[[matrix.languages.go.releases]]
+tag = "v1.66.3"
+
+[[matrix.languages.go.releases]]
+tag = "v1.67.3"
+
+[[matrix.languages.go.releases]]
+tag = "v1.68.2"
+
+[[matrix.languages.go.releases]]
+tag = "v1.69.4"
+
+[[matrix.languages.go.releases]]
+tag = "v1.70.0"
+
+[[matrix.languages.go.releases]]
+tag = "v1.71.3"
+
+[[matrix.languages.go.releases]]
+tag = "v1.72.3"
+
+[[matrix.languages.go.releases]]
+tag = "v1.73.1"
+
+[[matrix.languages.go.releases]]
+tag = "v1.74.3"
+
+[[matrix.languages.go.releases]]
+tag = "v1.75.1"
+
+[[matrix.languages.go.releases]]
+tag = "v1.76.0"
+
+[matrix.languages.java]
+repo = "https://github.com/grpc/grpc-java.git"
+build_from_release_tag = false
+root_env_var = "GRPC_JAVA_ROOT"
+default_runtimes = ["java"]
+default_profile = "java__master"
+
+[[matrix.languages.java.releases]]
+tag = "v1.0.3"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.1.2"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.2.0"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.3.1"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.4.0"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.5.0"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.6.1"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.7.1"
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.8.0"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.9.1"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.10.1"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.11.0"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.12.1"
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.13.2"
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.14.0"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.15.1"
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.16.1"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.17.2"
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.18.0"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.19.0"
+runtimes = ["java_oracle8"]
+testcases_file = "java__v1.0.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.20.0"
+runtimes = ["java_oracle8"]
+
+[[matrix.languages.java.releases]]
+tag = "v1.21.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.22.2"
+
+[[matrix.languages.java.releases]]
+tag = "v1.23.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.24.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.25.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.26.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.27.2"
+
+[[matrix.languages.java.releases]]
+tag = "v1.28.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.29.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.30.2"
+
+[[matrix.languages.java.releases]]
+tag = "v1.31.2"
+
+[[matrix.languages.java.releases]]
+tag = "v1.32.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.33.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.34.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.35.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.36.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.37.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.38.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.39.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.40.2"
+
+[[matrix.languages.java.releases]]
+tag = "v1.41.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.42.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.43.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.44.2"
+
+[[matrix.languages.java.releases]]
+tag = "v1.45.4"
+
+[[matrix.languages.java.releases]]
+tag = "v1.46.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.47.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.48.2"
+
+[[matrix.languages.java.releases]]
+tag = "v1.49.2"
+
+[[matrix.languages.java.releases]]
+tag = "v1.50.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.51.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.52.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.53.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.54.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.55.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.56.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.57.2"
+
+[[matrix.languages.java.releases]]
+tag = "v1.58.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.59.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.60.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.61.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.63.2"
+
+[[matrix.languages.java.releases]]
+tag = "v1.64.2"
+
+[[matrix.languages.java.releases]]
+tag = "v1.65.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.66.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.67.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.68.3"
+
+[[matrix.languages.java.releases]]
+tag = "v1.69.1"
+
+[[matrix.languages.java.releases]]
+tag = "v1.70.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.71.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.72.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.73.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.74.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.75.0"
+
+[[matrix.languages.java.releases]]
+tag = "v1.76.0"
+
+[matrix.languages.python]
+repo = "https://github.com/grpc/grpc.git"
+build_from_release_tag = true
+root_env_var = "GRPC_ROOT"
+default_runtimes = ["python", "pythonasyncio"]
+default_profile = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.0.x"
+runtimes = ["python"]
+testcases_file = "python__v1.0.x"
+
+[[matrix.languages.python.releases]]
+tag = "v1.1.4"
+runtimes = ["python"]
+testcases_file = "python__v1.0.x"
+
+[[matrix.languages.python.releases]]
+tag = "v1.2.5"
+runtimes = ["python"]
+testcases_file = "python__v1.0.x"
+
+[[matrix.languages.python.releases]]
+tag = "v1.3.9"
+runtimes = ["python"]
+testcases_file = "python__v1.0.x"
+
+[[matrix.languages.python.releases]]
+tag = "v1.4.2"
+runtimes = ["python"]
+testcases_file = "python__v1.0.x"
+
+[[matrix.languages.python.releases]]
+tag = "v1.6.6"
+runtimes = ["python"]
+testcases_file = "python__v1.0.x"
+
+[[matrix.languages.python.releases]]
+tag = "v1.7.2"
+runtimes = ["python"]
+testcases_file = "python__v1.0.x"
+
+[[matrix.languages.python.releases]]
+tag = "v1.8.1"
+runtimes = ["python"]
+testcases_file = "python__v1.0.x"
+
+[[matrix.languages.python.releases]]
+tag = "v1.9.1"
+runtimes = ["python"]
+testcases_file = "python__v1.0.x"
+
+[[matrix.languages.python.releases]]
+tag = "v1.10.1"
+runtimes = ["python"]
+testcases_file = "python__v1.0.x"
+
+[[matrix.languages.python.releases]]
+tag = "v1.11.1"
+runtimes = ["python"]
+testcases_file = "python__v1.11.1"
+
+[[matrix.languages.python.releases]]
+tag = "v1.12.0"
+runtimes = ["python"]
+testcases_file = "python__v1.11.1"
+
+[[matrix.languages.python.releases]]
+tag = "v1.13.0"
+runtimes = ["python"]
+testcases_file = "python__v1.11.1"
+
+[[matrix.languages.python.releases]]
+tag = "v1.14.1"
+runtimes = ["python"]
+testcases_file = "python__v1.11.1"
+
+[[matrix.languages.python.releases]]
+tag = "v1.15.0"
+runtimes = ["python"]
+testcases_file = "python__v1.11.1"
+
+[[matrix.languages.python.releases]]
+tag = "v1.16.0"
+runtimes = ["python"]
+testcases_file = "python__v1.11.1"
+
+[[matrix.languages.python.releases]]
+tag = "v1.17.1"
+runtimes = ["python"]
+testcases_file = "python__v1.11.1"
+
+[[matrix.languages.python.releases]]
+tag = "v1.18.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.19.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.20.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.21.4"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.22.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.22.1"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.23.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.24.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.25.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.26.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.27.3"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.30.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.31.1"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.32.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.33.2"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.34.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.35.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.36.3"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.37.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.38.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.39.0"
+runtimes = ["python"]
+testcases_file = "python__v1.18.0"
+
+[[matrix.languages.python.releases]]
+tag = "v1.41.1"
+runtimes = ["python"]
+testcases_file = "python__v1.41.1"
+
+[[matrix.languages.python.releases]]
+tag = "v1.42.0"
+runtimes = ["python"]
+testcases_file = "python__v1.41.1"
+
+[[matrix.languages.python.releases]]
+tag = "v1.43.2"
+runtimes = ["python"]
+testcases_file = "python__v1.41.1"
+
+[[matrix.languages.python.releases]]
+tag = "v1.44.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.46.2"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.47.1"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.48.3"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.49.1"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.52.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.53.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.54.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.55.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.56.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.57.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.58.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.60.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.61.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.62.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.63.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.64.1"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.65.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.66.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.67.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.69.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.70.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.71.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.72.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.73.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.74.0"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[[matrix.languages.python.releases]]
+tag = "v1.75.1"
+runtimes = ["python"]
+testcases_file = "python__master"
+
+[matrix.languages.node]
+repo = "https://github.com/grpc/grpc-node.git"
+build_from_release_tag = false
+root_env_var = "GRPC_NODE_ROOT"
+default_runtimes = ["node"]
+default_profile = "node__master"
+
+[[matrix.languages.node.releases]]
+tag = "v1.0.1"
+testcases_file = "node__v1.0.1"
+
+[[matrix.languages.node.releases]]
+tag = "v1.1.4"
+testcases_file = "node__v1.1.4"
+
+[[matrix.languages.node.releases]]
+tag = "v1.2.5"
+testcases_file = "node__v1.1.4"
+
+[[matrix.languages.node.releases]]
+tag = "v1.3.9"
+testcases_file = "node__v1.1.4"
+
+[[matrix.languages.node.releases]]
+tag = "v1.4.2"
+testcases_file = "node__v1.1.4"
+
+[[matrix.languages.node.releases]]
+tag = "v1.6.6"
+testcases_file = "node__v1.1.4"
+
+[[matrix.languages.node.releases]]
+tag = "v1.8.4"
+
+[[matrix.languages.node.releases]]
+tag = "v1.9.1"
+
+[[matrix.languages.node.releases]]
+tag = "v1.10.0"
+
+[[matrix.languages.node.releases]]
+tag = "v1.11.3"
+
+[[matrix.languages.node.releases]]
+tag = "v1.12.4"
+
+[matrix.languages.ruby]
+repo = "https://github.com/grpc/grpc.git"
+build_from_release_tag = true
+root_env_var = "GRPC_ROOT"
+default_runtimes = ["ruby"]
+default_profile = "ruby__master"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.0.1"
+patch = ["tools/dockerfile/interoptest/grpc_interop_ruby/Dockerfile", "tools/dockerfile/interoptest/grpc_interop_ruby/build_interop.sh"]
+testcases_file = "ruby__v1.0.1"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.1.4"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.2.5"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.3.9"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.4.2"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.6.6"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.7.2"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.8.0"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.9.1"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.10.1"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.11.1"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.12.0"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.13.0"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.14.1"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.15.0"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.16.0"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.17.1"
+testcases_file = "ruby__v1.1.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.18.0"
+patch = ["tools/dockerfile/interoptest/grpc_interop_ruby/build_interop.sh"]
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.19.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.20.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.21.4"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.22.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.22.1"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.23.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.24.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.25.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.26.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.27.3"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.30.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.31.1"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.32.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.33.2"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.34.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.35.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.36.3"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.37.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.38.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.39.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.41.1"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.42.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.43.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.44.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.46.2"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.47.1"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.48.3"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.49.1"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.52.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.53.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.54.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.55.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.56.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.57.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.58.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.60.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.61.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.62.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.63.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.64.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.65.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.66.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.67.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.69.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.70.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.71.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.72.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.73.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.74.0"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.75.1"
+
+[[matrix.languages.ruby.releases]]
+tag = "v1.76.0"
+
+[matrix.languages.php]
+repo = "https://github.com/grpc/grpc.git"
+build_from_release_tag = true
+root_env_var = "GRPC_ROOT"
+default_runtimes = ["php7"]
+default_profile = "php__master"
+
+[[matrix.languages.php.releases]]
+tag = "v1.0.1"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.1.4"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.2.5"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.3.9"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.4.2"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.6.6"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.7.2"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.8.0"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.9.1"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.10.1"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.11.1"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.12.0"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.13.0"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.14.1"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.15.0"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.16.0"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.17.1"
+testcases_file = "php__v1.0.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.18.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.21.4"
+
+[[matrix.languages.php.releases]]
+tag = "v1.22.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.22.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.23.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.24.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.25.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.26.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.27.3"
+
+[[matrix.languages.php.releases]]
+tag = "v1.30.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.31.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.32.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.33.2"
+
+[[matrix.languages.php.releases]]
+tag = "v1.34.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.35.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.36.3"
+
+[[matrix.languages.php.releases]]
+tag = "v1.37.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.38.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.39.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.41.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.42.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.43.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.44.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.46.2"
+
+[[matrix.languages.php.releases]]
+tag = "v1.47.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.48.3"
+
+[[matrix.languages.php.releases]]
+tag = "v1.49.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.52.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.53.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.54.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.55.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.56.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.57.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.58.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.60.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.61.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.62.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.63.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.64.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.65.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.66.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.67.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.70.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.71.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.72.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.73.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.74.0"
+
+[[matrix.languages.php.releases]]
+tag = "v1.75.1"
+
+[[matrix.languages.php.releases]]
+tag = "v1.76.0"
+
+[matrix.languages.csharp]
+repo = "https://github.com/grpc/grpc.git"
+build_from_release_tag = true
+root_env_var = "GRPC_ROOT"
+default_runtimes = ["csharp", "csharpcoreclr"]
+default_profile = "csharp__master"
+[matrix.languages.csharp.runtime_profile_replacements]
+csharpcoreclr = ["csharp_", "csharpcoreclr_"]
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.0.1"
+patch = ["tools/dockerfile/interoptest/grpc_interop_csharp/Dockerfile", "tools/dockerfile/interoptest/grpc_interop_csharpcoreclr/Dockerfile"]
+testcases_file = "csharp__v1.1.4"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.1.4"
+testcases_file = "csharp__v1.1.4"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.2.5"
+testcases_file = "csharp__v1.1.4"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.3.9"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.4.2"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.6.6"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.7.2"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.8.0"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.9.1"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.10.1"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.11.1"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.12.0"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.13.0"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.14.1"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.15.0"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.16.0"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.17.1"
+testcases_file = "csharp__v1.3.9"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.18.0"
+testcases_file = "csharp__v1.18.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.19.0"
+testcases_file = "csharp__v1.18.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.20.0"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.21.4"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.22.0"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.22.1"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.23.0"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.24.0"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.25.0"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.26.0"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.27.3"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.30.0"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.31.1"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.32.0"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.33.2"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.34.0"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.35.0"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.36.3"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.37.0"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.38.1"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.39.1"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.41.1"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.42.0"
+testcases_file = "csharp__v1.20.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.43.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.44.0"
+
+[[matrix.languages.csharp.releases]]
+tag = "v1.46.2"
+
+[matrix.profiles."csharp__master"]
+docker_env = []
+workdir = "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45"
+shell = "bash -c"
+cmd_prefix = "mono Grpc.IntegrationTesting.Client.exe"
+args_style = "modern"
+
+[matrix.profiles."csharp__v1.1.4"]
+docker_env = []
+workdir = "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug"
+shell = "bash -c"
+cmd_prefix = "mono Grpc.IntegrationTesting.Client.exe"
+args_style = "legacy_override"
+
+[matrix.profiles."csharp__v1.3.9"]
+docker_env = []
+workdir = "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45"
+shell = "bash -c"
+cmd_prefix = "mono Grpc.IntegrationTesting.Client.exe"
+args_style = "legacy_override"
+
+[matrix.profiles."csharp__v1.18.0"]
+docker_env = []
+workdir = "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45"
+shell = "bash -c"
+cmd_prefix = "mono Grpc.IntegrationTesting.Client.exe"
+args_style = "modern"
+
+[matrix.profiles."csharp__v1.20.0"]
+docker_env = []
+workdir = "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/net45"
+shell = "bash -c"
+cmd_prefix = "mono Grpc.IntegrationTesting.Client.exe"
+args_style = "modern"
+
+[matrix.profiles."csharpcoreclr__master"]
+docker_env = []
+workdir = "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp3.1"
+shell = "bash -c"
+cmd_prefix = "dotnet exec Grpc.IntegrationTesting.Client.dll"
+args_style = "modern"
+
+[matrix.profiles."csharpcoreclr__v1.1.4"]
+docker_env = []
+workdir = "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp1.0"
+shell = "bash -c"
+cmd_prefix = "dotnet exec Grpc.IntegrationTesting.Client.dll"
+args_style = "legacy_override"
+
+[matrix.profiles."csharpcoreclr__v1.3.9"]
+docker_env = []
+workdir = "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp1.0"
+shell = "bash -c"
+cmd_prefix = "dotnet exec Grpc.IntegrationTesting.Client.dll"
+args_style = "legacy_override"
+
+[matrix.profiles."csharpcoreclr__v1.18.0"]
+docker_env = []
+workdir = "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp1.1"
+shell = "bash -c"
+cmd_prefix = "dotnet exec Grpc.IntegrationTesting.Client.dll"
+args_style = "modern"
+
+[matrix.profiles."csharpcoreclr__v1.20.0"]
+docker_env = []
+workdir = "/var/local/git/grpc/src/csharp/Grpc.IntegrationTesting.Client/bin/Debug/netcoreapp2.1"
+shell = "bash -c"
+cmd_prefix = "dotnet exec Grpc.IntegrationTesting.Client.dll"
+args_style = "modern"
+
+[matrix.profiles."cxx__master"]
+docker_env = []
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "cmake/build/interop_client"
+args_style = "modern"
+
+[matrix.profiles."cxx__v1.0.1"]
+docker_env = []
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "bins/opt/interop_client"
+args_style = "legacy_override"
+
+[matrix.profiles."cxx__v1.31.1"]
+docker_env = []
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "bins/opt/interop_client"
+args_style = "modern"
+
+[matrix.profiles."go__master"]
+docker_env = ["GO111MODULE=on"]
+workdir = "/go/src/google.golang.org/grpc/interop/client"
+shell = "bash -c"
+cmd_prefix = "go run client.go"
+args_style = "modern"
+
+[matrix.profiles."go__v1.0.5"]
+docker_env = []
+workdir = "/go/src/google.golang.org/grpc/interop/client"
+shell = "bash -c"
+cmd_prefix = "go run client.go"
+args_style = "legacy_override"
+
+[matrix.profiles."go__v1.20.0"]
+docker_env = []
+workdir = "/go/src/google.golang.org/grpc/interop/client"
+shell = "bash -c"
+cmd_prefix = "go run client.go"
+args_style = "modern"
+
+[matrix.profiles."java__master"]
+docker_env = []
+workdir = "/var/local/git/grpc/../grpc-java"
+shell = "bash -c"
+cmd_prefix = "./run-test-client.sh"
+args_style = "modern"
+
+[matrix.profiles."java__v1.0.3"]
+docker_env = []
+workdir = "/var/local/git/grpc/../grpc-java"
+shell = "bash -c"
+cmd_prefix = "./run-test-client.sh"
+args_style = "legacy_override"
+
+[matrix.profiles."node__master"]
+docker_env = []
+workdir = "/var/local/git/grpc-node"
+shell = "bash -c"
+cmd_prefix = "packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh node --require ./test/fixtures/native_native test/interop/interop_client.js"
+args_style = "legacy_override"
+
+[matrix.profiles."node__v1.0.1"]
+docker_env = []
+workdir = "/var/local/git/grpc"
+shell = "bash -l -c"
+cmd_prefix = "node src/node/interop/interop_client.js"
+args_style = "legacy_override"
+
+[matrix.profiles."node__v1.1.4"]
+docker_env = []
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "tools/run_tests/interop/with_nvm.sh node src/node/interop/interop_client.js"
+args_style = "legacy_override"
+
+[matrix.profiles."php__master"]
+docker_env = []
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "src/php/bin/interop_client.sh"
+args_style = "modern"
+
+[matrix.profiles."php__v1.0.1"]
+docker_env = []
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "src/php/bin/interop_client.sh"
+args_style = "legacy_override"
+
+[matrix.profiles."python__master"]
+docker_env = ["PYTHONPATH=/var/local/git/grpc/src/python/gens", "LD_LIBRARY_PATH=/var/local/git/grpc/libs/opt"]
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "py39/bin/python src/python/grpcio_tests/setup.py run_interop --client"
+args_style = "python_modern"
+
+[matrix.profiles."python__v1.0.x"]
+docker_env = ["PYTHONPATH=/var/local/git/grpc/src/python/gens", "LD_LIBRARY_PATH=/var/local/git/grpc/libs/opt"]
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "py27/bin/python src/python/grpcio_tests/setup.py run_interop --client"
+args_style = "python_legacy_override"
+
+[matrix.profiles."python__v1.11.1"]
+docker_env = ["PYTHONPATH=/var/local/git/grpc/src/python/gens", "LD_LIBRARY_PATH=/var/local/git/grpc/libs/opt"]
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "py27_native/bin/python src/python/grpcio_tests/setup.py run_interop --client"
+args_style = "python_legacy_override"
+
+[matrix.profiles."python__v1.18.0"]
+docker_env = ["PYTHONPATH=/var/local/git/grpc/src/python/gens", "LD_LIBRARY_PATH=/var/local/git/grpc/libs/opt"]
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "py37_native/bin/python src/python/grpcio_tests/setup.py run_interop --client"
+args_style = "python_modern"
+
+[matrix.profiles."python__v1.41.1"]
+docker_env = ["PYTHONPATH=/var/local/git/grpc/src/python/gens", "LD_LIBRARY_PATH=/var/local/git/grpc/libs/opt"]
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "py39_native/bin/python src/python/grpcio_tests/setup.py run_interop --client"
+args_style = "python_modern"
+
+[matrix.profiles."ruby__master"]
+docker_env = []
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/client.rb"
+args_style = "modern"
+
+[matrix.profiles."ruby__v1.0.1"]
+docker_env = []
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "source /usr/local/rvm/scripts/rvm && ruby src/ruby/pb/test/client.rb"
+args_style = "legacy_override"
+
+[matrix.profiles."ruby__v1.1.4"]
+docker_env = []
+workdir = "/var/local/git/grpc"
+shell = "bash -c"
+cmd_prefix = "tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/client.rb"
+args_style = "legacy_override"

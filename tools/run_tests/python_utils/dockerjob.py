@@ -35,8 +35,8 @@ def random_name(base_name):
 
 
 def docker_kill(cid):
-    """Kills a docker container. Returns True if successful."""
-    return (
+    """Kills and removes a docker container synchronously. Returns True if successful."""
+    killed = (
         subprocess.call(
             ["docker", "kill", str(cid)],
             stdin=subprocess.PIPE,
@@ -45,6 +45,16 @@ def docker_kill(cid):
         )
         == 0
     )
+    removed = (
+        subprocess.call(
+            ["docker", "rm", "-f", str(cid)],
+            stdin=subprocess.PIPE,
+            stdout=_DEVNULL,
+            stderr=subprocess.STDOUT,
+        )
+        == 0
+    )
+    return killed or removed
 
 
 def docker_mapped_port(cid, port, timeout_seconds=15):
