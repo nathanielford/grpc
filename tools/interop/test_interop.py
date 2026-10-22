@@ -15,6 +15,7 @@
 """Verification and adversarial regression test suite for gRPC interop harness."""
 
 import ast
+import copy
 import glob
 import io
 import json
@@ -46,17 +47,21 @@ from tools.interop import runner  # noqa: E402
 from tools.run_tests.python_utils import dockerjob  # noqa: E402
 
 
+def _git_show_master(rel_path):
+    for ref in ("master", "origin/master"):
+        try:
+            return subprocess.check_output(
+                ["git", "-C", _REPO_ROOT, "show", f"{ref}:{rel_path}"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+        except subprocess.CalledProcessError:
+            continue
+    raise RuntimeError(f"Could not git show {rel_path} from master or origin/master")
+
+
 def _load_master_run_interop_tests():
-    src = subprocess.check_output(
-        [
-            "git",
-            "-C",
-            _REPO_ROOT,
-            "show",
-            "master:tools/run_tests/run_interop_tests.py",
-        ],
-        text=True,
-    )
+    src = _git_show_master("tools/run_tests/run_interop_tests.py")
     cutoff = src.index("args = argp.parse_args()")
     src = src[:cutoff]
     ns = {
@@ -70,16 +75,7 @@ def _load_master_run_interop_tests():
 
 
 def _load_master_client_matrix():
-    src = subprocess.check_output(
-        [
-            "git",
-            "-C",
-            _REPO_ROOT,
-            "show",
-            "master:tools/interop_matrix/client_matrix.py",
-        ],
-        text=True,
-    )
+    src = _git_show_master("tools/interop_matrix/client_matrix.py")
     ns = {
         "__file__": os.path.join(
             _REPO_ROOT, "tools/interop_matrix/client_matrix.py"
@@ -814,6 +810,102 @@ class InteropHarnessVerificationTest(unittest.TestCase):
             self.assertIn("--build-arg BASE_NAME=grpc_interop_csharp", out_legacy)
         finally:
             shutil.rmtree(temp_root, ignore_errors=True)
+
+    def test_18_config_schema_positive_and_negative_validation(self):
+        """Verify config.schema.json positive validation, <350 line budget, and negative schema rejections."""
+        cfg_path = os.path.join(_REPO_ROOT, "tools/interop/config.json")
+        schema_path = os.path.join(
+            _REPO_ROOT, "tools/interop/config.schema.json"
+        )
+        with open(cfg_path) as f:
+            cfg_lines = f.readlines()
+            valid_cfg = json.loads("".join(cfg_lines))
+        with open(schema_path) as f:
+            schema = json.load(f)
+
+        # Verify line count budget (< 350 lines)
+        self.assertLess(
+            len(cfg_lines),
+            350,
+            f"config.json has {len(cfg_lines)} lines, expected < 350",
+        )
+
+        # Positive validation
+        runner.validate_config_schema(valid_cfg, schema)
+        loaded = runner.load_config(cfg_path, schema_path)
+        self.assertEqual(loaded["schema_version"], "3.0")
+
+        # 1. Unknown top-level property rejected
+        bad_top = copy.deepcopy(valid_cfg)
+        bad_top["unexpected_top_key"] = True
+        with self.assertRaisesRegex(
+            ValueError, "Additional property 'unexpected_top_key' is not allowed"
+        ):
+            runner.validate_config_schema(bad_top, schema)
+
+        # 2. Unknown property inside a language entry rejected
+        bad_lang_prop = copy.deepcopy(valid_cfg)
+        bad_lang_prop["languages"]["go"]["unknown_field"] = 123
+        with self.assertRaisesRegex(
+            ValueError, "Additional property 'unknown_field' is not allowed"
+        ):
+            runner.validate_config_schema(bad_lang_prop, schema)
+
+        # 3. Invalid capability enum rejected
+        bad_cap = copy.deepcopy(valid_cfg)
+        bad_cap["languages"]["go"]["client_capabilities_add"].append(
+            "NOT_A_REAL_CAPABILITY"
+        )
+        with self.assertRaisesRegex(ValueError, "NOT_A_REAL_CAPABILITY"):
+            runner.validate_config_schema(bad_cap, schema)
+
+        # 4. Duplicate capability in CapabilityList rejected (uniqueItems)
+        dup_cap = copy.deepcopy(valid_cfg)
+        dup_cap["language_defaults"]["client_capabilities"].append(
+            "CORE_INTEROP"
+        )
+        with self.assertRaisesRegex(
+            ValueError, "Duplicate array item 'CORE_INTEROP'"
+        ):
+            runner.validate_config_schema(dup_cap, schema)
+
+        # 5. Missing required property rejected
+        missing_req = copy.deepcopy(valid_cfg)
+        del missing_req["languages"]["go"]["client_cmd"]
+        with self.assertRaisesRegex(
+            ValueError, "Missing required property 'client_cmd'"
+        ):
+            runner.validate_config_schema(missing_req, schema)
+
+        # 6. Invalid CommandSpec oneOf rejected
+        bad_cmd = copy.deepcopy(valid_cfg)
+        bad_cmd["languages"]["go"]["client_cmd"] = {
+            "command": ["go"],
+            "args_mode": "invalid_mode",
+        }
+        with self.assertRaisesRegex(
+            ValueError, "did not match any oneOf branch"
+        ):
+            runner.validate_config_schema(bad_cmd, schema)
+
+        # 7. Invalid matrix release range endpoints or inverted order rejected by load_config
+        for bad_range in ("v9.9.9..v9.9.10", "v1.19.0..v1.0.1"):
+            bad_matrix = copy.deepcopy(valid_cfg)
+            bad_matrix["matrix"]["languages"]["cxx"]["overrides"][bad_range] = {
+                "testcases_file": "cxx__v1.0.1"
+            }
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".json", delete=False
+            ) as tf:
+                json.dump(bad_matrix, tf)
+                tmp_cfg_path = tf.name
+            try:
+                with self.assertRaisesRegex(
+                    ValueError, "Invalid release range"
+                ):
+                    runner.load_config(tmp_cfg_path, schema_path)
+            finally:
+                os.unlink(tmp_cfg_path)
 
 
 if __name__ == "__main__":

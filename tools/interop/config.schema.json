@@ -1,0 +1,736 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://grpc.io/schemas/interop-config.schema.json",
+  "title": "gRPC Interop Test Configuration",
+  "description": "Declarative configuration for gRPC cross-language interop suites, language endpoints, capabilities, and backward-compatibility release matrix. Fixed harness protocol flags, timeouts, and report paths live in tools/interop/runner.py.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "capabilities",
+    "prod_servers",
+    "prod_server_capabilities",
+    "server_order",
+    "http2_badserver_client_order",
+    "alts_language_order",
+    "test_cases",
+    "language_defaults",
+    "languages",
+    "matrix"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path or URI to this JSON Schema file."
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "3.0",
+      "description": "Configuration schema version."
+    },
+    "capabilities": {
+      "type": "array",
+      "description": "Exhaustive list of positive feature, credential, and transport capabilities used to match clients, servers, and test cases.",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/CapabilityName"
+      }
+    },
+    "prod_servers": {
+      "type": "object",
+      "description": "Production interop target server nicknames mapped to their hostnames.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "prod_server_capabilities": {
+      "type": "array",
+      "description": "Capabilities supported by production interop target servers.",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/CapabilityName"
+      }
+    },
+    "server_order": {
+      "type": "array",
+      "description": "Ordered list of language keys eligible as cloud_to_cloud server choices.",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "http2_badserver_client_order": {
+      "type": "array",
+      "description": "Ordered list of language keys that run negative HTTP/2 server test cases.",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "alts_language_order": {
+      "type": "array",
+      "description": "Ordered list of language keys supporting ALTS transport security.",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "test_cases": {
+      "type": "object",
+      "description": "Feature-group / suite-driven test case definitions. To add a test case, append an entry to the appropriate suite's 'cases' array; it automatically inherits the suite's default capabilities unless overridden.",
+      "required": [
+        "standard",
+        "auth",
+        "http2_client",
+        "http2_server"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "standard": {
+          "$ref": "#/$defs/StandardSuiteSpec"
+        },
+        "auth": {
+          "$ref": "#/$defs/AuthSuiteSpec"
+        },
+        "http2_client": {
+          "$ref": "#/$defs/Http2ClientSuiteSpec"
+        },
+        "http2_server": {
+          "$ref": "#/$defs/Http2ServerSuiteSpec"
+        }
+      }
+    },
+    "language_defaults": {
+      "$ref": "#/$defs/LanguageDefaults",
+      "description": "Default settings and baseline client/server capabilities inherited by every entry in 'languages'."
+    },
+    "languages": {
+      "type": "object",
+      "description": "Language and endpoint definitions. To add a new language, add an entry with its 'client_cmd', optional 'server_cmd'/'http2_client_cmd', working directory ('cwd'), and any capability additions ('client_capabilities_add', 'server_capabilities_add') or removals relative to 'language_defaults'.",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/$defs/LanguageSpec"
+      }
+    },
+    "matrix": {
+      "$ref": "#/$defs/MatrixSpec",
+      "description": "Backward-compatibility release matrix configuration."
+    }
+  },
+  "$defs": {
+    "CapabilityName": {
+      "type": "string",
+      "enum": [
+        "CORE_INTEROP",
+        "ADVANCED_INTEROP",
+        "TIMEOUT_ON_SLEEPING_SERVER",
+        "CLIENT_COMPRESSION_UNARY",
+        "CLIENT_COMPRESSION_STREAMING",
+        "SERVER_COMPRESSION_UNARY",
+        "SERVER_COMPRESSION_STREAMING",
+        "SPECIAL_STATUS_MESSAGE",
+        "DATA_FRAME_PADDING",
+        "ORCA",
+        "SINGLE_INVOCATION_SUITE",
+        "AUTH_CREDS",
+        "AUTH_KEY_FILE_FLAG",
+        "AUTH_KEY_FILE_ENV",
+        "GOOGLE_DEFAULT_CREDS",
+        "GCE_CHANNEL_CREDS",
+        "GCE_OAUTH2",
+        "OAUTH2_DEFAULT_ACCOUNT_ARG",
+        "HTTP2_INTEROP",
+        "HTTP2_SERVER_INTEROP",
+        "HTTP2_BADSERVER_CLIENT",
+        "HTTP2_BADPEER_CLIENT",
+        "TLS",
+        "INSECURE",
+        "ALTS"
+      ]
+    },
+    "TransportSecurityName": {
+      "type": "string",
+      "enum": [
+        "tls",
+        "alts",
+        "insecure",
+        "google_default_credentials",
+        "compute_engine_channel_creds"
+      ]
+    },
+    "CapabilityList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/CapabilityName"
+      }
+    },
+    "StandardSuiteSpec": {
+      "type": "object",
+      "required": [
+        "default_capabilities",
+        "cases"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "default_capabilities": {
+          "$ref": "#/$defs/CapabilityList",
+          "description": "Capabilities required by all standard test cases (combined with per-case 'capabilities')."
+        },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/StandardTestCase"
+          }
+        }
+      }
+    },
+    "StandardTestCase": {
+      "description": "Either a test case name string (inherits suite default_capabilities) or an object specifying additional capabilities or cloud_to_cloud flags.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "capabilities": {
+              "$ref": "#/$defs/CapabilityList",
+              "description": "Additional capabilities required on both client and server beyond the suite default."
+            },
+            "extra_c2c_flags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Extra CLI flags passed to the client in cloud_to_cloud mode."
+            }
+          }
+        }
+      ]
+    },
+    "AuthSuiteSpec": {
+      "type": "object",
+      "required": [
+        "default_capabilities",
+        "cases"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "default_capabilities": {
+          "$ref": "#/$defs/CapabilityList",
+          "description": "Default capabilities required when a test case does not specify 'capabilities'."
+        },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/AuthTestCase"
+          }
+        }
+      }
+    },
+    "AuthTestCase": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capabilities": {
+          "$ref": "#/$defs/CapabilityList",
+          "description": "Capabilities required for this auth test case (overrides suite default_capabilities)."
+        },
+        "transport_security": {
+          "$ref": "#/$defs/TransportSecurityName",
+          "description": "Transport/credential security mode (defaults to 'tls')."
+        },
+        "requires_compute_engine_creds": {
+          "type": "boolean"
+        },
+        "uses_service_account_key": {
+          "type": "boolean"
+        },
+        "uses_key_file_when_flag": {
+          "type": "boolean"
+        },
+        "uses_oauth_scope": {
+          "type": "boolean"
+        },
+        "uses_default_service_account": {
+          "type": "boolean"
+        },
+        "requires_compute_engine_creds_capability": {
+          "$ref": "#/$defs/CapabilityName"
+        },
+        "uses_default_service_account_capability": {
+          "$ref": "#/$defs/CapabilityName"
+        }
+      }
+    },
+    "Http2ClientSuiteSpec": {
+      "type": "object",
+      "required": [
+        "default_capabilities",
+        "cases"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "default_capabilities": {
+          "$ref": "#/$defs/CapabilityList"
+        },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "capabilities": {
+                    "$ref": "#/$defs/CapabilityList"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "Http2ServerSuiteSpec": {
+      "type": "object",
+      "required": [
+        "default_client_capabilities",
+        "default_server_capabilities",
+        "cases"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "default_client_capabilities": {
+          "$ref": "#/$defs/CapabilityList"
+        },
+        "default_server_capabilities": {
+          "$ref": "#/$defs/CapabilityList"
+        },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/Http2ServerTestCase"
+          }
+        }
+      }
+    },
+    "Http2ServerTestCase": {
+      "description": "Either a test case name string (inherits suite default_client_capabilities and default_server_capabilities) or an object specifying custom capabilities, grpc_client_test_case, or transport_security.",
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "client_capabilities": {
+              "$ref": "#/$defs/CapabilityList"
+            },
+            "server_capabilities": {
+              "$ref": "#/$defs/CapabilityList"
+            },
+            "grpc_client_test_case": {
+              "type": "string",
+              "minLength": 1
+            },
+            "transport_security": {
+              "$ref": "#/$defs/TransportSecurityName"
+            }
+          }
+        }
+      ]
+    },
+    "CommandSpec": {
+      "description": "Command specification: either a simple token array (args appended) or an object specifying custom argument formatting.",
+      "oneOf": [
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "command",
+            "args_mode"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "args_mode": {
+              "type": "string",
+              "enum": [
+                "append",
+                "joined_flag",
+                "ignore_args",
+                "extract_port_template"
+              ]
+            },
+            "arg_template": {
+              "type": "string"
+            },
+            "port_regex": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "LanguageDefaults": {
+      "type": "object",
+      "required": [
+        "repo",
+        "in_runner_languages",
+        "included_in_all_clients",
+        "docker_supported",
+        "client_capabilities",
+        "server_capabilities"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "repo": {
+          "type": "string"
+        },
+        "in_runner_languages": {
+          "type": "boolean"
+        },
+        "included_in_all_clients": {
+          "type": "boolean"
+        },
+        "docker_supported": {
+          "type": "boolean"
+        },
+        "client_capabilities": {
+          "$ref": "#/$defs/CapabilityList"
+        },
+        "server_capabilities": {
+          "$ref": "#/$defs/CapabilityList"
+        }
+      }
+    },
+    "LanguageSpec": {
+      "type": "object",
+      "required": [
+        "client_cmd"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "safename": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "in_runner_languages": {
+          "type": "boolean"
+        },
+        "included_in_all_clients": {
+          "type": "boolean"
+        },
+        "docker_supported": {
+          "type": "boolean"
+        },
+        "is_http2_target": {
+          "type": "boolean"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "client_cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "server_cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "http2_cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "global_env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "cloud_to_prod_env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "client_cmd": {
+          "$ref": "#/$defs/CommandSpec"
+        },
+        "server_cmd": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CommandSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "http2_client_cmd": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CommandSpec"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "client_capabilities": {
+          "$ref": "#/$defs/CapabilityList"
+        },
+        "client_capabilities_add": {
+          "$ref": "#/$defs/CapabilityList"
+        },
+        "client_capabilities_remove": {
+          "$ref": "#/$defs/CapabilityList"
+        },
+        "server_capabilities": {
+          "$ref": "#/$defs/CapabilityList"
+        },
+        "server_capabilities_add": {
+          "$ref": "#/$defs/CapabilityList"
+        },
+        "server_capabilities_remove": {
+          "$ref": "#/$defs/CapabilityList"
+        },
+        "http2_server_client_capabilities": {
+          "$ref": "#/$defs/CapabilityList"
+        },
+        "http2_client_server_capabilities": {
+          "$ref": "#/$defs/CapabilityList"
+        }
+      }
+    },
+    "MatrixSpec": {
+      "type": "object",
+      "required": [
+        "languages",
+        "testcase_profiles"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "runtime_testcases_prefix_overrides": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "lang",
+              "replace_from",
+              "replace_to"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "lang": {
+                "type": "string"
+              },
+              "replace_from": {
+                "type": "string"
+              },
+              "replace_to": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "languages": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/MatrixLanguageSpec"
+          }
+        },
+        "testcase_profiles": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/MatrixProfileSpec"
+          }
+        }
+      }
+    },
+    "MatrixLanguageSpec": {
+      "type": "object",
+      "required": [
+        "repo",
+        "default_runtimes",
+        "releases"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1
+        },
+        "default_runtimes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "build_from_release_tag": {
+          "type": "boolean"
+        },
+        "root_env_var": {
+          "type": "string",
+          "minLength": 1
+        },
+        "releases": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Ordered list of release version tags for this language."
+        },
+        "overrides": {
+          "type": "object",
+          "description": "Release metadata overrides keyed by single tag ('v1.0.1'), inclusive tag range ('v1.0.1..v1.19.0'), or comma-separated tags ('v1.7.1,v1.12.1'). Applied in key order.",
+          "additionalProperties": {
+            "$ref": "#/$defs/MatrixReleaseOverride"
+          }
+        }
+      }
+    },
+    "MatrixReleaseOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtimes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "testcases_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "patch": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "MatrixProfileSpec": {
+      "type": "object",
+      "required": [
+        "client_cmd"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "workdir": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Container working directory (defaults to /var/local/git/grpc)."
+        },
+        "client_cmd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Client command prefix before harness interop flags."
+        },
+        "host_override": {
+          "type": "boolean",
+          "description": "Whether this legacy release requires --server_host_override."
+        },
+        "joined_args": {
+          "type": "boolean",
+          "description": "Whether interop flags are passed inside --args=\"...\"."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "bash_login": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

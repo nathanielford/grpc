@@ -18,7 +18,6 @@ from collections import OrderedDict
 from enum import Enum
 import argparse
 import atexit
-import copy
 import itertools
 import json
 import multiprocessing
@@ -34,6 +33,7 @@ import uuid
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(_THIS_DIR, "../.."))
 DEFAULT_CONFIG_PATH = os.path.join(_THIS_DIR, "config.json")
+DEFAULT_SCHEMA_PATH = os.path.join(_THIS_DIR, "config.schema.json")
 
 _PYTHON_UTILS_DIR = os.path.join(ROOT, "tools/run_tests/python_utils")
 if _PYTHON_UTILS_DIR not in sys.path:
@@ -91,6 +91,111 @@ class TransportSecurity(Enum):
     COMPUTE_ENGINE_CHANNEL_CREDS = "compute_engine_channel_creds"
 
 
+# Fixed harness protocol constants
+DOCKER_WORKDIR_ROOT = "/var/local/git/grpc"
+_DEFAULT_SERVER_PORT = 8080
+_TEST_TIMEOUT = 3 * 60
+_DOCKER_BUILD_XML_REPORT = "interop_docker_build/sponge_log.xml"
+_TESTS_XML_REPORT = "interop_test/sponge_log.xml"
+_MATRIX_XML_REPORT = "report.xml"
+_DEFAULT_SERVICE_ACCOUNT_KEY_FILE = (
+    "/root/service_account/grpc-testing-ebe7c1ac7381.json"
+)
+_DEFAULT_SERVICE_ACCOUNT = (
+    "830293263384-compute@developer.gserviceaccount.com"
+)
+_OAUTH_SCOPE = "https://www.googleapis.com/auth/xapi.zoo"
+_C2C_CLIENT_EXTRA_FLAGS = (
+    "--server_host_override=foo.test.google.fr",
+    "--use_test_ca=true",
+)
+_MATRIX_DEFAULT_SERVER_HOST = "74.125.206.210"
+_MATRIX_DEFAULT_DOCKER_PATH = (
+    "us-docker.pkg.dev/grpc-testing/testing-images-public"
+)
+_MATRIX_DEFAULT_GIT_CHECKOUT_ROOT = "/export/hda3/tmp/grpc_matrix"
+_MATRIX_TEST_TIMEOUT_SECONDS = 60
+_MATRIX_PULL_IMAGE_TIMEOUT_SECONDS = 15 * 60
+_MATRIX_BUILD_IMAGE_TIMEOUT_SECONDS = 30 * 60
+_MATRIX_FLAKE_RETRIES = 5
+
+_TRANSPORT_SECURITY_SPECS = OrderedDict(
+    [
+        (
+            "tls",
+            {
+                "client_flags": ["--use_tls=true"],
+                "server_flags": ["--use_tls=true"],
+                "required_capability": Capability.TLS,
+            },
+        ),
+        (
+            "alts",
+            {
+                "client_flags": ["--use_tls=false", "--use_alts=true"],
+                "server_flags": ["--use_tls=false", "--use_alts=true"],
+                "required_capability": Capability.ALTS,
+            },
+        ),
+        (
+            "insecure",
+            {
+                "client_flags": ["--use_tls=false"],
+                "server_flags": ["--use_tls=false"],
+                "required_capability": Capability.INSECURE,
+            },
+        ),
+    ]
+)
+
+_CUSTOM_CREDENTIALS_SPECS = OrderedDict(
+    [
+        (
+            "tls",
+            {
+                "client_flags": ["--use_tls=true"],
+                "required_capability": Capability.TLS,
+            },
+        ),
+        (
+            "google_default_credentials",
+            {
+                "client_flags": [
+                    "--custom_credentials_type=google_default_credentials"
+                ],
+                "required_capability": Capability.GOOGLE_DEFAULT_CREDS,
+            },
+        ),
+        (
+            "compute_engine_channel_creds",
+            {
+                "client_flags": [
+                    "--custom_credentials_type=compute_engine_channel_creds"
+                ],
+                "required_capability": Capability.GCE_CHANNEL_CREDS,
+            },
+        ),
+    ]
+)
+
+_LEGACY_CLASS_NAMES = (
+    "CXXLanguage",
+    "AspNetCoreLanguage",
+    "CSharpLanguage",
+    "DartLanguage",
+    "JavaLanguage",
+    "JavaOkHttpClient",
+    "GoLanguage",
+    "NodeLanguage",
+    "NodePureJSLanguage",
+    "PHP7Language",
+    "ObjcLanguage",
+    "RubyLanguage",
+    "PythonLanguage",
+    "PythonAsyncIOLanguage",
+)
+
+
 def _parse_capability(val):
     if isinstance(val, Capability):
         return val
@@ -102,84 +207,329 @@ def _parse_capability_set(items):
     return frozenset(_parse_capability(x) for x in (items or []))
 
 
-def load_config(config_path=None):
-    """Loads and validates tools/interop/config.json."""
-    path = config_path or DEFAULT_CONFIG_PATH
-    with open(path, "r") as f:
+def _check_json_type(val, expected_type):
+    if expected_type == "object":
+        return isinstance(val, dict)
+    if expected_type == "array":
+        return isinstance(val, list)
+    if expected_type == "string":
+        return isinstance(val, str)
+    if expected_type == "boolean":
+        return isinstance(val, bool)
+    if expected_type == "integer":
+        return isinstance(val, int) and not isinstance(val, bool)
+    if expected_type == "number":
+        return isinstance(val, (int, float)) and not isinstance(val, bool)
+    if expected_type == "null":
+        return val is None
+    return False
+
+
+def validate_config_schema(data, schema, root_schema=None, path="$"):
+    """Stdlib JSON Schema validator for tools/interop/config.json."""
+    if root_schema is None:
+        root_schema = schema
+
+    if "$ref" in schema:
+        ref = schema["$ref"]
+        if not ref.startswith("#/"):
+            raise ValueError("%s: Unsupported $ref %r" % (path, ref))
+        target = root_schema
+        for part in ref[2:].split("/"):
+            target = target[part]
+        validate_config_schema(data, target, root_schema=root_schema, path=path)
+        return
+
+    if "oneOf" in schema:
+        errors = []
+        matched = 0
+        for sub in schema["oneOf"]:
+            try:
+                validate_config_schema(
+                    data, sub, root_schema=root_schema, path=path
+                )
+                matched += 1
+            except ValueError as exc:
+                errors.append(str(exc))
+        if matched == 0:
+            raise ValueError(
+                "%s: Value %r did not match any oneOf branch (%s)"
+                % (path, data, "; ".join(errors))
+            )
+        return
+
+    if "type" in schema:
+        expected = schema["type"]
+        allowed_types = (
+            expected if isinstance(expected, list) else [expected]
+        )
+        if not any(_check_json_type(data, t) for t in allowed_types):
+            raise ValueError(
+                "%s: Expected type %r, got %s"
+                % (path, expected, type(data).__name__)
+            )
+
+    if "const" in schema and data != schema["const"]:
+        raise ValueError(
+            "%s: Expected const %r, got %r" % (path, schema["const"], data)
+        )
+
+    if "enum" in schema and data not in schema["enum"]:
+        raise ValueError(
+            "%s: Value %r not in enum %r" % (path, data, schema["enum"])
+        )
+
+    if isinstance(data, str):
+        if "minLength" in schema and len(data) < schema["minLength"]:
+            raise ValueError(
+                "%s: String length %d < minLength %d"
+                % (path, len(data), schema["minLength"])
+            )
+        if "pattern" in schema and not re.search(schema["pattern"], data):
+            raise ValueError(
+                "%s: String %r does not match pattern %r"
+                % (path, data, schema["pattern"])
+            )
+
+    if isinstance(data, list):
+        if "minItems" in schema and len(data) < schema["minItems"]:
+            raise ValueError(
+                "%s: Array length %d < minItems %d"
+                % (path, len(data), schema["minItems"])
+            )
+        if schema.get("uniqueItems"):
+            seen = []
+            for item in data:
+                if item in seen:
+                    raise ValueError(
+                        "%s: Duplicate array item %r" % (path, item)
+                    )
+                seen.append(item)
+        if "items" in schema:
+            for idx, item in enumerate(data):
+                validate_config_schema(
+                    item,
+                    schema["items"],
+                    root_schema=root_schema,
+                    path="%s[%d]" % (path, idx),
+                )
+
+    if isinstance(data, dict):
+        if "minProperties" in schema and len(data) < schema["minProperties"]:
+            raise ValueError(
+                "%s: Object has %d properties, minProperties is %d"
+                % (path, len(data), schema["minProperties"])
+            )
+        for req_key in schema.get("required", []):
+            if req_key not in data:
+                raise ValueError(
+                    "%s: Missing required property %r" % (path, req_key)
+                )
+        props = schema.get("properties", {})
+        add_props = schema.get("additionalProperties", True)
+        for k, v in data.items():
+            child_path = "%s.%s" % (path, k)
+            if k in props:
+                validate_config_schema(
+                    v, props[k], root_schema=root_schema, path=child_path
+                )
+            elif add_props is False:
+                raise ValueError(
+                    "%s: Additional property %r is not allowed" % (path, k)
+                )
+            elif isinstance(add_props, dict):
+                validate_config_schema(
+                    v, add_props, root_schema=root_schema, path=child_path
+                )
+
+
+class ReleaseInfo:
+    """Info about a single release of a language."""
+
+    def __init__(self, patch=None, runtimes=None, testcases_file=None):
+        self.patch = list(patch) if patch else []
+        self.runtimes = list(runtimes) if runtimes else []
+        self.testcases_file = testcases_file
+
+    def __eq__(self, other):
+        if not (
+            hasattr(other, "patch")
+            and hasattr(other, "runtimes")
+            and hasattr(other, "testcases_file")
+        ):
+            return False
+        return (
+            self.patch == other.patch
+            and self.runtimes == other.runtimes
+            and self.testcases_file == other.testcases_file
+        )
+
+    def __repr__(self):
+        return (
+            "ReleaseInfo(patch=%r, runtimes=%r, testcases_file=%r)"
+            % (self.patch, self.runtimes, self.testcases_file)
+        )
+
+
+def _expand_matrix_releases(releases_raw, overrides_raw=None):
+    rel_od = OrderedDict()
+    if isinstance(releases_raw, dict):
+        for rtag, rentry in releases_raw.items():
+            rentry = rentry or {}
+            rel_od[rtag] = ReleaseInfo(
+                patch=rentry.get("patch"),
+                runtimes=rentry.get("runtimes"),
+                testcases_file=rentry.get("testcases_file"),
+            )
+        return rel_od
+
+    tag_list = list(releases_raw)
+    merged = {tag: {} for tag in tag_list}
+    for key_expr, ovr in (overrides_raw or {}).items():
+        if ".." in key_expr:
+            start_tag, end_tag = key_expr.split("..", 1)
+            if start_tag not in merged or end_tag not in merged:
+                raise ValueError(
+                    "Invalid release range %r: endpoints not in releases"
+                    % key_expr
+                )
+            s_idx = tag_list.index(start_tag)
+            e_idx = tag_list.index(end_tag)
+            if s_idx > e_idx:
+                raise ValueError(
+                    "Invalid release range %r: start after end" % key_expr
+                )
+            target_tags = tag_list[s_idx : e_idx + 1]
+        elif "," in key_expr:
+            target_tags = [t.strip() for t in key_expr.split(",") if t.strip()]
+        else:
+            target_tags = [key_expr]
+
+        for t in target_tags:
+            if t not in merged:
+                raise ValueError(
+                    "Override tag %r not found in releases list" % t
+                )
+            merged[t] = dict(ovr)
+
+    for tag in tag_list:
+        entry = merged[tag]
+        rel_od[tag] = ReleaseInfo(
+            patch=entry.get("patch"),
+            runtimes=entry.get("runtimes"),
+            testcases_file=entry.get("testcases_file"),
+        )
+    return rel_od
+
+
+def load_config(config_path=None, schema_path=None):
+    """Loads tools/interop/config.json and validates it against config.schema.json."""
+    c_path = config_path or DEFAULT_CONFIG_PATH
+    s_path = schema_path or DEFAULT_SCHEMA_PATH
+    with open(c_path, "r") as f:
         data = json.load(f)
-    required_keys = (
-        "schema_version",
-        "capabilities",
-        "defaults",
-        "prod_servers",
-        "transport_security",
-        "custom_credentials_types",
-        "suites",
-        "test_cases",
-        "test_case_capabilities",
-        "languages",
-        "matrix",
-    )
-    for k in required_keys:
-        if k not in data:
-            raise ValueError("Missing required key in config.json: %s" % k)
+    with open(s_path, "r") as f:
+        schema = json.load(f)
+
+    validate_config_schema(data, schema)
+
+    schema_caps = set(schema["$defs"]["CapabilityName"]["enum"])
+    config_caps = set(data["capabilities"])
+    enum_caps = {c.value for c in Capability}
+    if config_caps != schema_caps or config_caps != enum_caps:
+        raise ValueError(
+            "Capability mismatch between config.json, config.schema.json, and runner.Capability"
+        )
+
+    for mlang, mdata in data["matrix"]["languages"].items():
+        _expand_matrix_releases(mdata["releases"], mdata.get("overrides"))
+
     return data
 
 
 _CONFIG = load_config()
 
-DOCKER_WORKDIR_ROOT = _CONFIG["defaults"].get(
-    "docker_workdir_root", "/var/local/git/grpc"
-)
-_DEFAULT_SERVER_PORT = int(_CONFIG["defaults"].get("default_server_port", 8080))
-_TEST_TIMEOUT = int(_CONFIG["defaults"].get("test_timeout_seconds", 3 * 60))
-_REPORTS_CFG = _CONFIG["defaults"].get("reports", {})
-_DOCKER_BUILD_XML_REPORT = _REPORTS_CFG.get(
-    "docker_build_xml",
-    _CONFIG["defaults"].get(
-        "docker_build_xml_report", "interop_docker_build/sponge_log.xml"
-    ),
-)
-_TESTS_XML_REPORT = _REPORTS_CFG.get(
-    "tests_xml",
-    _CONFIG["defaults"].get("tests_xml_report", "interop_test/sponge_log.xml"),
-)
+def _normalize_case_entry(tc):
+    return {"name": tc} if isinstance(tc, str) else dict(tc)
 
-_TEST_CASES = [tc["name"] for tc in _CONFIG["test_cases"]["standard"]]
-_AUTH_TEST_CASES = [tc["name"] for tc in _CONFIG["test_cases"]["auth"]]
-_HTTP2_TEST_CASES = [tc["name"] for tc in _CONFIG["test_cases"]["http2_client"]]
-_HTTP2_SERVER_TEST_CASES = [
-    tc["name"] for tc in _CONFIG["test_cases"]["http2_server"]
+
+_STD_SUITE = _CONFIG["test_cases"]["standard"]
+_AUTH_SUITE = _CONFIG["test_cases"]["auth"]
+_H2_CLIENT_SUITE = _CONFIG["test_cases"]["http2_client"]
+_H2_SERVER_SUITE = _CONFIG["test_cases"]["http2_server"]
+
+_STD_CASES = [_normalize_case_entry(tc) for tc in _STD_SUITE["cases"]]
+_AUTH_CASES = [_normalize_case_entry(tc) for tc in _AUTH_SUITE["cases"]]
+_H2_CLIENT_CASES = [
+    _normalize_case_entry(tc) for tc in _H2_CLIENT_SUITE["cases"]
+]
+_H2_SERVER_CASES = [
+    _normalize_case_entry(tc) for tc in _H2_SERVER_SUITE["cases"]
 ]
 
-_AUTH_TEST_CASE_SPECS = {
-    tc["name"]: tc for tc in _CONFIG["test_cases"]["auth"]
-}
-_STANDARD_TEST_CASE_SPECS = {
-    tc["name"]: tc for tc in _CONFIG["test_cases"]["standard"]
-}
-_HTTP2_SERVER_TEST_CASE_SPECS = {
-    tc["name"]: tc for tc in _CONFIG["test_cases"]["http2_server"]
-}
+_TEST_CASES = [tc["name"] for tc in _STD_CASES]
+_AUTH_TEST_CASES = [tc["name"] for tc in _AUTH_CASES]
+_HTTP2_TEST_CASES = [tc["name"] for tc in _H2_CLIENT_CASES]
+_HTTP2_SERVER_TEST_CASES = [tc["name"] for tc in _H2_SERVER_CASES]
 
-TEST_CASE_REQUIRED_CAPABILITIES = {
-    tc: _parse_capability_set(caps["client"])
-    for tc, caps in _CONFIG["test_case_capabilities"].items()
-}
-SERVER_TEST_CASE_REQUIRED_CAPABILITIES = {
-    tc: _parse_capability_set(caps["server"])
-    for tc, caps in _CONFIG["test_case_capabilities"].items()
-}
+_AUTH_TEST_CASE_SPECS = {tc["name"]: tc for tc in _AUTH_CASES}
+_STANDARD_TEST_CASE_SPECS = {tc["name"]: tc for tc in _STD_CASES}
+_HTTP2_SERVER_TEST_CASE_SPECS = {tc["name"]: tc for tc in _H2_SERVER_CASES}
+
+TEST_CASE_REQUIRED_CAPABILITIES = {}
+SERVER_TEST_CASE_REQUIRED_CAPABILITIES = {}
+
+_std_default_caps = _parse_capability_set(_STD_SUITE["default_capabilities"])
+for _tc in _STD_CASES:
+    _caps = _std_default_caps | _parse_capability_set(_tc.get("capabilities"))
+    TEST_CASE_REQUIRED_CAPABILITIES[_tc["name"]] = _caps
+    SERVER_TEST_CASE_REQUIRED_CAPABILITIES[_tc["name"]] = _caps
+
+_auth_default_caps = _parse_capability_set(_AUTH_SUITE["default_capabilities"])
+for _tc in _AUTH_CASES:
+    _caps = (
+        _parse_capability_set(_tc["capabilities"])
+        if "capabilities" in _tc
+        else _auth_default_caps
+    )
+    TEST_CASE_REQUIRED_CAPABILITIES[_tc["name"]] = _caps
+    SERVER_TEST_CASE_REQUIRED_CAPABILITIES[_tc["name"]] = _caps
+
+_h2c_default_caps = _parse_capability_set(
+    _H2_CLIENT_SUITE["default_capabilities"]
+)
+for _tc in _H2_CLIENT_CASES:
+    _caps = (
+        _parse_capability_set(_tc["capabilities"])
+        if "capabilities" in _tc
+        else _h2c_default_caps
+    )
+    TEST_CASE_REQUIRED_CAPABILITIES[_tc["name"]] = _caps
+    SERVER_TEST_CASE_REQUIRED_CAPABILITIES[_tc["name"]] = _caps
+
+_h2s_default_client_caps = _parse_capability_set(
+    _H2_SERVER_SUITE["default_client_capabilities"]
+)
+_h2s_default_server_caps = _parse_capability_set(
+    _H2_SERVER_SUITE["default_server_capabilities"]
+)
+for _tc in _H2_SERVER_CASES:
+    TEST_CASE_REQUIRED_CAPABILITIES[_tc["name"]] = (
+        _parse_capability_set(_tc["client_capabilities"])
+        if "client_capabilities" in _tc
+        else _h2s_default_client_caps
+    )
+    SERVER_TEST_CASE_REQUIRED_CAPABILITIES[_tc["name"]] = (
+        _parse_capability_set(_tc["server_capabilities"])
+        if "server_capabilities" in _tc
+        else _h2s_default_server_caps
+    )
 
 TRANSPORT_SECURITY_CAPABILITIES = {}
-for ts_name, ts_cfg in _CONFIG["transport_security"].items():
-    TRANSPORT_SECURITY_CAPABILITIES[ts_name] = _parse_capability(
-        ts_cfg["required_capability"]
-    )
-for cc_name, cc_cfg in _CONFIG["custom_credentials_types"].items():
-    TRANSPORT_SECURITY_CAPABILITIES[cc_name] = _parse_capability(
-        cc_cfg["required_capability"]
-    )
+for _ts_name, _ts_cfg in _TRANSPORT_SECURITY_SPECS.items():
+    TRANSPORT_SECURITY_CAPABILITIES[_ts_name] = _ts_cfg["required_capability"]
+for _cc_name, _cc_cfg in _CUSTOM_CREDENTIALS_SPECS.items():
+    TRANSPORT_SECURITY_CAPABILITIES[_cc_name] = _cc_cfg["required_capability"]
 
 _SKIP_CLIENT_COMPRESSION = [
     "client_compressed_unary",
@@ -328,8 +678,10 @@ def compute_unimplemented_client_cases(capabilities):
             + list(_ORCA_TEST_CASES)
             + list(_AUTH_TEST_CASES)
         )
-    elif Capability.ORCA in capabilities and Capability.DATA_FRAME_PADDING not in capabilities:
-        # e.g., c++, javaokhttp: data_frame_padding, standard test cases, then auth test cases
+    elif (
+        Capability.ORCA in capabilities
+        and Capability.DATA_FRAME_PADDING not in capabilities
+    ):
         candidates = (
             list(_SKIP_DATA_FRAME_PADDING)
             + list(_TEST_CASES)
@@ -525,6 +877,53 @@ class ExternalServerEndpoint:
         return self.name
 
 
+def _resolve_language_cfg(lang_name, raw_cfg, defaults):
+    merged = dict(defaults)
+    merged.update(raw_cfg)
+    cwd = raw_cfg.get("cwd")
+    if cwd is not None:
+        if "client_cwd" not in raw_cfg:
+            merged["client_cwd"] = cwd
+        if "server_cwd" not in raw_cfg:
+            merged["server_cwd"] = cwd
+        if "http2_cwd" not in raw_cfg:
+            merged["http2_cwd"] = cwd
+
+    if "client_capabilities" in raw_cfg:
+        client_caps = _parse_capability_set(raw_cfg["client_capabilities"])
+    else:
+        base_c = _parse_capability_set(defaults.get("client_capabilities", []))
+        add_c = _parse_capability_set(
+            raw_cfg.get("client_capabilities_add", [])
+        )
+        rem_c = _parse_capability_set(
+            raw_cfg.get("client_capabilities_remove", [])
+        )
+        client_caps = (base_c | add_c) - rem_c
+
+    if "server_capabilities" in raw_cfg:
+        server_caps = _parse_capability_set(raw_cfg["server_capabilities"])
+    elif (
+        raw_cfg.get("server_cmd") is None
+        and "server_capabilities_add" not in raw_cfg
+        and "server_capabilities_remove" not in raw_cfg
+    ):
+        server_caps = frozenset()
+    else:
+        base_s = _parse_capability_set(defaults.get("server_capabilities", []))
+        add_s = _parse_capability_set(
+            raw_cfg.get("server_capabilities_add", [])
+        )
+        rem_s = _parse_capability_set(
+            raw_cfg.get("server_capabilities_remove", [])
+        )
+        server_caps = (base_s | add_s) - rem_s
+
+    merged["_resolved_client_capabilities"] = client_caps
+    merged["_resolved_server_capabilities"] = server_caps
+    return merged
+
+
 class ConfigurableLanguage:
     """Language/endpoint configuration loaded from tools/interop/config.json."""
 
@@ -534,14 +933,14 @@ class ConfigurableLanguage:
         self.name = name
         self._raw = dict(raw_cfg)
         self.safename = raw_cfg.get("safename", name)
-        self.repo = raw_cfg.get("repo", "grpc")
+        self.repo = raw_cfg.get("repo", "grpc/grpc")
         self.in_runner_languages = bool(
             raw_cfg.get("in_runner_languages", True)
         )
         self.included_in_all_clients = bool(
             raw_cfg.get("included_in_all_clients", True)
         )
-        self.is_server_supported = bool(raw_cfg.get("supports_server", False))
+        self.is_server_supported = bool(raw_cfg.get("server_cmd") is not None)
         self.docker_supported = bool(raw_cfg.get("docker_supported", True))
         self.is_http2_target = bool(raw_cfg.get("is_http2_target", False))
         self.use_contract = bool(use_contract)
@@ -560,17 +959,42 @@ class ConfigurableLanguage:
             raw_cfg.get("http2_client_cmd")
         )
 
-        contract_raw = raw_cfg.get("contract_commands") or {}
-        self._contract_client_spec = CommandSpec.from_dict(
-            contract_raw.get("client")
-        )
-        self._contract_server_spec = CommandSpec.from_dict(
-            contract_raw.get("server")
-        )
-        self._contract_http2_spec = CommandSpec.from_dict(
-            contract_raw.get("http2_client")
-        )
+        self._contract_client_spec = None
+        self._contract_server_spec = None
+        self._contract_http2_spec = None
+        if self.docker_supported:
+            if self._client_cmd_spec is not None:
+                extra_flags = (
+                    [
+                        tok
+                        for tok in self._client_cmd_spec.command[1:]
+                        if tok.startswith("--") and "=" in tok
+                    ]
+                    if self._client_cmd_spec.args_mode == "append"
+                    else []
+                )
+                self._contract_client_spec = CommandSpec(
+                    command=["/interop/client"] + extra_flags,
+                    args_mode="append",
+                )
+            if self._server_cmd_spec is not None:
+                srv_mode = (
+                    "ignore_args"
+                    if self._server_cmd_spec.args_mode == "ignore_args"
+                    else "append"
+                )
+                self._contract_server_spec = CommandSpec(
+                    command=["/interop/server"],
+                    args_mode=srv_mode,
+                )
+            if self._http2_client_cmd_spec is not None:
+                self._contract_http2_spec = CommandSpec(
+                    command=["/interop/http2_client"],
+                    args_mode="append",
+                )
 
+        resolved_c = raw_cfg.get("_resolved_client_capabilities", frozenset())
+        resolved_s = raw_cfg.get("_resolved_server_capabilities", frozenset())
         if (
             role_override == "server"
             and "http2_server_client_capabilities" in raw_cfg
@@ -578,29 +1002,18 @@ class ConfigurableLanguage:
             self.client_capabilities = _parse_capability_set(
                 raw_cfg.get("http2_server_client_capabilities", [])
             )
-            self.server_capabilities = _parse_capability_set(
-                raw_cfg.get("server_capabilities", [])
-            )
+            self.server_capabilities = resolved_s
         elif (
             role_override == "client"
             and "http2_client_server_capabilities" in raw_cfg
         ):
-            self.client_capabilities = _parse_capability_set(
-                raw_cfg.get("client_capabilities", [])
-            )
+            self.client_capabilities = resolved_c
             self.server_capabilities = _parse_capability_set(
                 raw_cfg.get("http2_client_server_capabilities", [])
             )
         else:
-            self.client_capabilities = _parse_capability_set(
-                raw_cfg.get("client_capabilities", [])
-            )
-            self.server_capabilities = _parse_capability_set(
-                raw_cfg.get("server_capabilities", [])
-            )
-
-        self.server_docker_config = raw_cfg.get("server_docker_config")
-        self.docker_build = raw_cfg.get("docker_build")
+            self.client_capabilities = resolved_c
+            self.server_capabilities = resolved_s
 
     def has_capability(self, capability, role=None):
         cap = _parse_capability(capability)
@@ -750,8 +1163,26 @@ class ConfigurableLanguage:
         return "%s(%r)" % (self.__class__.__name__, self.name)
 
 
-def _make_language_subclass(lang_name, lang_cfg, role_override=None):
-    class_name = lang_cfg.get("legacy_class_name", "Language_" + lang_name)
+def _match_legacy_class_name(lang_name, safename):
+    for candidate in (lang_name.lower(), safename.lower()):
+        for cls_name in _LEGACY_CLASS_NAMES:
+            stem = cls_name
+            if stem.endswith("Language"):
+                stem = stem[: -len("Language")]
+            elif stem.endswith("Client"):
+                stem = stem[: -len("Client")]
+            if stem.lower() == candidate:
+                return cls_name
+    return "Language_" + safename
+
+
+def _make_language_subclass(
+    lang_name, lang_cfg, role_override=None, class_name_override=None
+):
+    safename = lang_cfg.get("safename", lang_name)
+    class_name = class_name_override or _match_legacy_class_name(
+        lang_name, safename
+    )
 
     def __init__(self, use_contract=False):
         ConfigurableLanguage.__init__(
@@ -767,7 +1198,6 @@ def _make_language_subclass(lang_name, lang_cfg, role_override=None):
         "default_role": role_override or "client",
     }
     if lang_cfg.get("server_cmd") is None:
-        # Hide server_cmd on client-only classes so hasattr(lang, "server_cmd") is False
         cls_dict["server_cmd"] = property(
             lambda self: (_ for _ in ()).throw(AttributeError("server_cmd"))
         )
@@ -785,28 +1215,35 @@ _LANGUAGES = {}
 Http2Client = None
 Http2Server = None
 
-for _lname, _lcfg in _CONFIG["languages"].items():
+_LANG_DEFAULTS = _CONFIG["language_defaults"]
+for _lname, _raw_lcfg in _CONFIG["languages"].items():
+    _lcfg = _resolve_language_cfg(_lname, _raw_lcfg, _LANG_DEFAULTS)
     if _lcfg.get("is_http2_target"):
         Http2Client = _make_language_subclass(
-            _lname, _lcfg, role_override="client"
+            _lname,
+            _lcfg,
+            role_override="client",
+            class_name_override="Http2Client",
         )
-        _srv_cfg = dict(_lcfg)
-        _srv_cfg["legacy_class_name"] = "Http2Server"
         Http2Server = _make_language_subclass(
-            _lname, _srv_cfg, role_override="server"
+            _lname,
+            _lcfg,
+            role_override="server",
+            class_name_override="Http2Server",
         )
         globals()["Http2Client"] = Http2Client
         globals()["Http2Server"] = Http2Server
     else:
         _cls = _make_language_subclass(_lname, _lcfg)
         _LANGUAGE_CLASSES[_lname] = _cls
-        if _lcfg.get("legacy_class_name"):
-            globals()[_lcfg["legacy_class_name"]] = _cls
+        globals()[_cls.__name__] = _cls
         if _lcfg.get("in_runner_languages", True):
             _LANGUAGES[_lname] = _cls()
 
 # Servers supported as cloud_to_cloud servers, derived from server_order and CORE_INTEROP capability
-_SERVER_CHOICE_NAMES = list(_CONFIG.get("server_order", list(_LANGUAGES.keys())))
+_SERVER_CHOICE_NAMES = list(
+    _CONFIG.get("server_order", list(_LANGUAGES.keys()))
+)
 _SERVERS = [
     name
     for name in _SERVER_CHOICE_NAMES
@@ -817,9 +1254,8 @@ _SERVERS = [
 
 _GRPC_CLIENT_TEST_CASES_FOR_HTTP2_SERVER_TEST_CASES = {
     tc["name"]: tc["grpc_client_test_case"]
-    for tc in _CONFIG["test_cases"]["http2_server"]
-    if tc.get("client_kind") == "grpc_client"
-    and tc.get("grpc_client_test_case")
+    for tc in _H2_SERVER_CASES
+    if tc.get("grpc_client_test_case")
 }
 
 _HTTP2_SERVER_TEST_CASES_THAT_USE_GRPC_CLIENTS = list(
@@ -851,10 +1287,8 @@ _SERVERS_FOR_ALTS_TEST_CASES = [
     and _LANGUAGES[name].has_capability(Capability.ALTS, role="server")
 ]
 
-_TRANSPORT_SECURITY_OPTIONS = list(_CONFIG["transport_security"].keys())
-_CUSTOM_CREDENTIALS_TYPE_OPTIONS = list(
-    _CONFIG["custom_credentials_types"].keys()
-)
+_TRANSPORT_SECURITY_OPTIONS = list(_TRANSPORT_SECURITY_SPECS.keys())
+_CUSTOM_CREDENTIALS_TYPE_OPTIONS = list(_CUSTOM_CREDENTIALS_SPECS.keys())
 prod_servers = dict(_CONFIG["prod_servers"])
 
 
@@ -949,9 +1383,7 @@ def auth_options(
     cmdargs = []
     env = {}
 
-    oauth_scope_arg = "--oauth_scope=%s" % _CONFIG["defaults"].get(
-        "oauth_scope", "https://www.googleapis.com/auth/xapi.zoo"
-    )
+    oauth_scope_arg = "--oauth_scope=%s" % _OAUTH_SCOPE
     key_file_arg = "--service_account_key_file=%s" % service_account_key_file
     default_account_arg = (
         "--default_service_account=%s" % default_service_account
@@ -984,8 +1416,7 @@ def auth_options(
 
     if auth_spec.get("uses_default_service_account"):
         if (
-            auth_spec.get("uses_service_account_key_when_flag")
-            == "google_default_creds_use_key_file"
+            auth_spec.get("uses_key_file_when_flag")
             and google_default_creds_use_key_file
         ):
             env["GOOGLE_APPLICATION_CREDENTIALS"] = service_account_key_file
@@ -1026,7 +1457,7 @@ def cloud_to_prod_jobspec(
         "--server_port=443",
         "--test_case=%s" % test_case,
     ]
-    cc_cfg = _CONFIG["custom_credentials_types"].get(transport_security)
+    cc_cfg = _CUSTOM_CREDENTIALS_SPECS.get(transport_security)
     if cc_cfg and language.supports_transport_security(
         transport_security, role="client"
     ):
@@ -1129,16 +1560,8 @@ def cloud_to_cloud_jobspec(
     use_contract_entrypoints=None,
 ):
     """Creates jobspec for cloud-to-cloud interop test."""
-    interop_only_options = list(
-        _CONFIG["suites"]["cloud_to_cloud"].get(
-            "client_extra_flags",
-            [
-                "--server_host_override=foo.test.google.fr",
-                "--use_test_ca=true",
-            ],
-        )
-    )
-    ts_cfg = _CONFIG["transport_security"].get(transport_security)
+    interop_only_options = list(_C2C_CLIENT_EXTRA_FLAGS)
+    ts_cfg = _TRANSPORT_SECURITY_SPECS.get(transport_security)
     if ts_cfg:
         interop_only_options += list(ts_cfg["client_flags"])
     else:
@@ -1161,8 +1584,8 @@ def cloud_to_cloud_jobspec(
         sys.exit(1)
 
     std_spec = _STANDARD_TEST_CASE_SPECS.get(test_case)
-    if std_spec and std_spec.get("extra_cloud_to_cloud_flags"):
-        interop_only_options += list(std_spec["extra_cloud_to_cloud_flags"])
+    if std_spec and std_spec.get("extra_c2c_flags"):
+        interop_only_options += list(std_spec["extra_c2c_flags"])
 
     common_options = [
         "--test_case=%s" % client_test_case,
@@ -1269,7 +1692,7 @@ def server_jobspec(
         "interop_server_%s" % language.safename
     )
     server_cmd = ["--port=%s" % _DEFAULT_SERVER_PORT]
-    ts_cfg = _CONFIG["transport_security"].get(transport_security)
+    ts_cfg = _TRANSPORT_SECURITY_SPECS.get(transport_security)
     if ts_cfg:
         server_cmd += list(ts_cfg["server_flags"])
     else:
@@ -1508,13 +1931,7 @@ def build_interop_argparser():
         "--service_account_key_file",
         type=str,
         help="The service account key file to use for some auth interop tests.",
-        default=_CONFIG["defaults"].get(
-            "default_service_account_key_file",
-            _CONFIG["defaults"].get(
-                "service_account_key_file",
-                "/root/service_account/grpc-testing-ebe7c1ac7381.json",
-            ),
-        ),
+        default=_DEFAULT_SERVICE_ACCOUNT_KEY_FILE,
     )
     parser.add_argument(
         "--default_service_account",
@@ -1523,10 +1940,7 @@ def build_interop_argparser():
             "Default GCE service account email to use for some auth interop"
             " tests."
         ),
-        default=_CONFIG["defaults"].get(
-            "default_service_account",
-            "830293263384-compute@developer.gserviceaccount.com",
-        ),
+        default=_DEFAULT_SERVICE_ACCOUNT,
     )
     parser.add_argument(
         "-t",
@@ -2011,9 +2425,11 @@ def run_interop_tests_main(cli_args=None):
                         jobs.append(test_job)
             for language in languages:
                 for test_case in _HTTP2_SERVER_TEST_CASES_THAT_USE_GRPC_CLIENTS:
+                    tc_spec = _HTTP2_SERVER_TEST_CASE_SPECS[test_case]
+                    ts_override = tc_spec.get("transport_security", "insecure")
                     if language.supports(
-                        test_case, "insecure"
-                    ) and http2InteropServer.supports(test_case, "insecure"):
+                        test_case, ts_override
+                    ) and http2InteropServer.supports(test_case, ts_override):
                         offset = sorted(_HTTP2_SERVER_TEST_CASES).index(
                             test_case
                         )
@@ -2022,7 +2438,7 @@ def run_interop_tests_main(cli_args=None):
                             server_port = http2_server_job.mapped_port(
                                 server_port
                             )
-                        if args.transport_security != "insecure":
+                        if args.transport_security != ts_override:
                             print(
                                 "Creating grpc client to http2 server test case "
                                 "with insecure connection, even though "
@@ -2036,7 +2452,7 @@ def run_interop_tests_main(cli_args=None):
                             "localhost",
                             server_port,
                             docker_image=docker_images.get(str(language)),
-                            transport_security="insecure",
+                            transport_security=ts_override,
                             manual_cmd_log=client_manual_cmd_log,
                         )
                         jobs.append(test_job)
@@ -2100,54 +2516,26 @@ def run_interop_tests_main(cli_args=None):
 # ============================================================================
 
 
-class ReleaseInfo:
-    """Info about a single release of a language."""
-
-    def __init__(self, patch=None, runtimes=None, testcases_file=None):
-        self.patch = list(patch) if patch else []
-        self.runtimes = list(runtimes) if runtimes else []
-        self.testcases_file = testcases_file
-
-    def __eq__(self, other):
-        if not (
-            hasattr(other, "patch")
-            and hasattr(other, "runtimes")
-            and hasattr(other, "testcases_file")
-        ):
-            return False
-        return (
-            self.patch == other.patch
-            and self.runtimes == other.runtimes
-            and self.testcases_file == other.testcases_file
-        )
-
-    def __repr__(self):
-        return (
-            "ReleaseInfo(patch=%r, runtimes=%r, testcases_file=%r)"
-            % (self.patch, self.runtimes, self.testcases_file)
-        )
-
-
 class MatrixTestcaseProfile:
     """Renders historical matrix docker run commands from declarative profile."""
 
     def __init__(
         self,
         name,
-        default_image,
-        workdir,
-        inner_command_template,
+        client_cmd,
+        workdir=None,
+        host_override=False,
+        joined_args=False,
         env=None,
         bash_login=False,
-        container_names=None,
     ):
         self.name = name
-        self.default_image = default_image
-        self.workdir = workdir
-        self.inner_command_template = inner_command_template
+        self.workdir = workdir or DOCKER_WORKDIR_ROOT
+        self.client_cmd = client_cmd
+        self.host_override = bool(host_override)
+        self.joined_args = bool(joined_args)
         self.env = dict(env or {})
         self.bash_login = bool(bash_login)
-        self.container_names = list(container_names or [])
 
     def render_commands(
         self, servers, test_cases, use_contract_entrypoints=False
@@ -2156,12 +2544,8 @@ class MatrixTestcaseProfile:
         env_str = (" " + " ".join(env_parts)) if env_parts else ""
         bash_cmd = "bash -l -c" if self.bash_login else "bash -c"
         lines = []
-        idx = 0
         for srv in servers:
             for tc in test_cases:
-                name_str = ""
-                if self.container_names and idx < len(self.container_names):
-                    name_str = " --name %s" % self.container_names[idx]
                 if use_contract_entrypoints:
                     inner = (
                         "/interop/client --server_host=%s"
@@ -2169,16 +2553,28 @@ class MatrixTestcaseProfile:
                         % (srv, tc)
                     )
                 else:
-                    inner = self.inner_command_template.format(
-                        server_host=srv, test_case=tc
-                    )
+                    if self.host_override:
+                        flags = (
+                            "--server_host=%s --server_host_override=%s"
+                            " --server_port=443 --use_tls=true --test_case=%s"
+                            % (srv, srv, tc)
+                        )
+                    else:
+                        flags = (
+                            "--server_host=%s --server_port=443"
+                            " --test_case=%s --use_tls=true"
+                            % (srv, tc)
+                        )
+                    if self.joined_args:
+                        inner = '%s --args=\\"%s\\"' % (self.client_cmd, flags)
+                    else:
+                        inner = "%s %s" % (self.client_cmd, flags)
                 line = (
-                    "docker run -i --rm=true%s -w %s --net=host%s"
+                    "docker run -i --rm=true%s -w %s --net=host"
                     ' $docker_image %s "%s"'
-                    % (env_str, self.workdir, name_str, bash_cmd, inner)
+                    % (env_str, self.workdir, bash_cmd, inner)
                 )
                 lines.append(line)
-                idx += 1
         return lines
 
 
@@ -2191,47 +2587,26 @@ _MATRIX_BUILD_FROM_RELEASE_TAG = {}
 _MATRIX_ROOT_ENV_VAR = {}
 
 for _mlang, _mdata in _MATRIX_CFG["languages"].items():
-    LANG_RUNTIME_MATRIX[_mlang] = list(
-        _mdata.get("default_runtimes", _mdata.get("runtimes", []))
-    )
+    LANG_RUNTIME_MATRIX[_mlang] = list(_mdata.get("default_runtimes", []))
     _MATRIX_REPOS[_mlang] = _mdata["repo"]
     _MATRIX_BUILD_FROM_RELEASE_TAG[_mlang] = bool(
-        _mdata.get(
-            "build_from_release_tag",
-            _mdata.get("build_docker_from_release_tag", True),
-        )
+        _mdata.get("build_from_release_tag", True)
     )
     _MATRIX_ROOT_ENV_VAR[_mlang] = _mdata.get("root_env_var", "GRPC_ROOT")
-    _rel_od = OrderedDict()
-    _releases_raw = _mdata["releases"]
-    if isinstance(_releases_raw, dict):
-        for _rtag, _rentry in _releases_raw.items():
-            _rentry = _rentry or {}
-            _rel_od[_rtag] = ReleaseInfo(
-                patch=_rentry.get("patch"),
-                runtimes=_rentry.get("runtimes"),
-                testcases_file=_rentry.get("testcases_file"),
-            )
-    else:
-        for _rentry in _releases_raw:
-            _rtag = _rentry["tag"]
-            _rel_od[_rtag] = ReleaseInfo(
-                patch=_rentry.get("patch"),
-                runtimes=_rentry.get("runtimes"),
-                testcases_file=_rentry.get("testcases_file"),
-            )
-    LANG_RELEASE_MATRIX[_mlang] = _rel_od
+    LANG_RELEASE_MATRIX[_mlang] = _expand_matrix_releases(
+        _mdata["releases"], _mdata.get("overrides")
+    )
 
 _MATRIX_PROFILES = {}
 for _pname, _pdata in _MATRIX_CFG.get("testcase_profiles", {}).items():
     _MATRIX_PROFILES[_pname] = MatrixTestcaseProfile(
         name=_pname,
-        default_image=_pdata.get("default_image"),
-        workdir=_pdata["workdir"],
-        inner_command_template=_pdata["inner_command_template"],
+        client_cmd=_pdata["client_cmd"],
+        workdir=_pdata.get("workdir"),
+        host_override=_pdata.get("host_override", False),
+        joined_args=_pdata.get("joined_args", False),
         env=_pdata.get("env"),
         bash_login=_pdata.get("bash_login", False),
-        container_names=_pdata.get("container_names"),
     )
 
 
@@ -2298,14 +2673,8 @@ def read_test_cases_file(
     testcases_file = resolve_testcases_filename(lang, runtime, release)
     if testcases_file in _MATRIX_PROFILES:
         profile = _MATRIX_PROFILES[testcases_file]
-        servers = _MATRIX_CFG.get(
-            "servers",
-            [
-                "grpc-test.sandbox.googleapis.com",
-                "grpc-test4.sandbox.googleapis.com",
-            ],
-        )
-        test_cases = _MATRIX_CFG.get("test_cases", _TEST_CASES[:9])
+        servers = list(prod_servers.values())
+        test_cases = _TEST_CASES[:9]
         return profile.render_commands(
             servers,
             test_cases,
@@ -2346,7 +2715,7 @@ def generate_test_case_jobspecs(
     runtime,
     release,
     suite_name,
-    server_host="74.125.206.210",
+    server_host=_MATRIX_DEFAULT_SERVER_HOST,
     allow_flakes=False,
     use_contract_entrypoints=False,
 ):
@@ -2357,12 +2726,8 @@ def generate_test_case_jobspecs(
         release,
         use_contract_entrypoints=use_contract_entrypoints,
     )
-    timeout_sec = int(_MATRIX_CFG.get("test_timeout_seconds", 60))
-    flake_retries = (
-        int(_CONFIG["defaults"].get("matrix_flake_retries", 5))
-        if allow_flakes
-        else 0
-    )
+    timeout_sec = _MATRIX_TEST_TIMEOUT_SECONDS
+    flake_retries = _MATRIX_FLAKE_RETRIES if allow_flakes else 0
 
     job_spec_list = []
     for line in testcase_lines:
@@ -2405,7 +2770,6 @@ def generate_test_case_jobspecs(
 
 def pull_image_for_lang(lang, image, release):
     """Pull an image for a given language from the image registry."""
-    pull_timeout = int(_MATRIX_CFG.get("pull_image_timeout_seconds", 15 * 60))
     cmdline = [
         "time gcloud docker -- pull %s && time docker run --rm=true %s"
         " /bin/true" % (image, image)
@@ -2413,7 +2777,7 @@ def pull_image_for_lang(lang, image, release):
     return jobset.JobSpec(
         cmdline=cmdline,
         shortname="pull_image_{}".format(image),
-        timeout_seconds=pull_timeout,
+        timeout_seconds=_MATRIX_PULL_IMAGE_TIMEOUT_SECONDS,
         shell=True,
         flake_retries=2,
     )
@@ -2424,7 +2788,9 @@ def cleanup_docker_image(image):
     dockerjob.remove_image(image, skip_nonexistent=True)
 
 
-def add_files_to_image(image, with_files, label=None, build_info_dir="/var/local/build_info"):
+def add_files_to_image(
+    image, with_files, label=None, build_info_dir="/var/local/build_info"
+):
     """Add files to a docker image via single-pass docker build."""
     if not with_files and not label:
         return
@@ -2439,7 +2805,9 @@ def add_files_to_image(image, with_files, label=None, build_info_dir="/var/local
             copied_names.append(bname)
         dockerfile_lines = ["FROM %s" % image]
         for bname in copied_names:
-            dockerfile_lines.append("COPY %s %s/%s" % (bname, build_info_dir, bname))
+            dockerfile_lines.append(
+                "COPY %s %s/%s" % (bname, build_info_dir, bname)
+            )
         if label:
             dockerfile_lines.append("LABEL %s" % label)
         dockerfile_path = os.path.join(temp_dir, "Dockerfile")
@@ -2458,13 +2826,12 @@ def build_matrix_image_jobspec(
     gcr_tag,
     stack_base,
     lang,
-    docker_path="us-docker.pkg.dev/grpc-testing/testing-images-public",
+    docker_path=_MATRIX_DEFAULT_DOCKER_PATH,
     image_builder_script="tools/run_tests/dockerize/build_interop_image.sh",
 ):
     """Build interop docker image for a language with runtime."""
     basename = "grpc_interop_%s" % runtime
     tag = "%s/%s:%s" % (docker_path, basename, gcr_tag)
-    timeout_sec = int(_MATRIX_CFG.get("build_image_timeout_seconds", 30 * 60))
     build_env = {"INTEROP_IMAGE": tag, "BASE_NAME": basename}
     build_env.update(env)
     image_builder_path = image_builder_script
@@ -2474,7 +2841,7 @@ def build_matrix_image_jobspec(
         cmdline=[image_builder_path],
         environ=build_env,
         shortname="build_docker_%s" % runtime,
-        timeout_seconds=timeout_sec,
+        timeout_seconds=_MATRIX_BUILD_IMAGE_TIMEOUT_SECONDS,
     )
     build_job.tag = tag
     return build_job
@@ -2603,10 +2970,7 @@ def build_matrix_build_argparser():
     parser.add_argument(
         "--gcr_path",
         "--docker_path",
-        default=_MATRIX_CFG.get(
-            "default_docker_path",
-            "us-docker.pkg.dev/grpc-testing/testing-images-public",
-        ),
+        default=_MATRIX_DEFAULT_DOCKER_PATH,
         dest="docker_path",
         help="Path of registry where the images are stored",
     )
@@ -2653,9 +3017,7 @@ def build_matrix_build_argparser():
     )
     parser.add_argument(
         "--git_checkout_root",
-        default=_MATRIX_CFG.get(
-            "default_git_checkout_root", "/export/hda3/tmp/grpc_matrix"
-        ),
+        default=_MATRIX_DEFAULT_GIT_CHECKOUT_ROOT,
         help="Folder under which grpc-go/java/main repo will be cloned. "
         "Valid only with --git_checkout.",
     )
@@ -2677,10 +3039,7 @@ def build_matrix_test_argparser():
     parser.add_argument(
         "--gcr_path",
         "--docker_path",
-        default=_MATRIX_CFG.get(
-            "default_docker_path",
-            "us-docker.pkg.dev/grpc-testing/testing-images-public",
-        ),
+        default=_MATRIX_DEFAULT_DOCKER_PATH,
         dest="docker_path",
         help="Path of docker images in Google Container Registry",
     )
@@ -2706,7 +3065,7 @@ def build_matrix_test_argparser():
     )
     parser.add_argument(
         "--report_file",
-        default=_REPORTS_CFG.get("matrix_xml", "report.xml"),
+        default=_MATRIX_XML_REPORT,
         help="The result file to create.",
     )
     parser.add_argument(
@@ -2728,7 +3087,7 @@ def build_matrix_test_argparser():
     )
     parser.add_argument(
         "--server_host",
-        default=_MATRIX_CFG.get("default_server_host", "74.125.206.210"),
+        default=_MATRIX_DEFAULT_SERVER_HOST,
         type=str,
         nargs="?",
         help="The gateway to backend services.",
