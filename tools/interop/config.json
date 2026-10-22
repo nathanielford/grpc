@@ -186,6 +186,14 @@
       "client_capabilities": ["CORE_INTEROP", "ADVANCED_INTEROP", "SPECIAL_STATUS_MESSAGE", "TLS", "INSECURE"],
       "server_capabilities": []
     },
+    "rust": {
+      "repo": "https://github.com/grpc/grpc-rust.git",
+      "cwd": "../grpc-rust",
+      "client_cmd": ["target/release/client", "--codec=protobuf"],
+      "server_cmd": ["target/release/server", "--codec=protobuf"],
+      "client_capabilities": ["CORE_INTEROP", "TIMEOUT_ON_SLEEPING_SERVER", "ADVANCED_INTEROP", "TLS", "INSECURE", "SPECIAL_STATUS_MESSAGE"],
+      "server_capabilities": ["CORE_INTEROP", "TIMEOUT_ON_SLEEPING_SERVER", "ADVANCED_INTEROP", "TLS", "INSECURE", "SPECIAL_STATUS_MESSAGE", "HTTP2_INTEROP"]
+    },
     "http2": {
       "repo": "https://github.com/grpc/grpc.git",
       "is_http2_target": true,
@@ -276,6 +284,9 @@
           "v1.18.0..v1.19.0": { "testcases_file": "csharp__v1.18.0" },
           "v1.20.0..v1.42.0": { "testcases_file": "csharp__v1.20.0" }
         }
+      },
+      "rust": {
+        "releases": []
       }
     },
     "custom_entrypoints": {
@@ -310,7 +321,8 @@
       "python__v1.41.1": { "cmd": "py39_native/bin/python src/python/grpcio_tests/setup.py run_interop --client", "joined_flag": true, "env": {"PYTHONPATH": "/var/local/git/grpc/src/python/gens", "LD_LIBRARY_PATH": "/var/local/git/grpc/libs/opt"} },
       "ruby__master": { "cmd": "tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/client.rb" },
       "ruby__v1.0.1": { "cmd": "source /usr/local/rvm/scripts/rvm && ruby src/ruby/pb/test/client.rb", "host_override": true },
-      "ruby__v1.1.4": { "cmd": "tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/client.rb", "host_override": true }
+      "ruby__v1.1.4": { "cmd": "tools/run_tests/interop/with_rvm.sh ruby src/ruby/pb/test/client.rb", "host_override": true },
+      "rust__master": { "cmd": "target/release/client --codec=protobuf", "workdir": "/var/local/git/grpc/../grpc-rust" }
     }
   }
 }
