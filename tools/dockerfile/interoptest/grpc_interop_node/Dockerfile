@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM debian:11
+ARG BASE_IMAGE=base
+FROM debian:11 AS base
 
 #=================
 # Basic C core dependencies
@@ -117,3 +118,18 @@ RUN git config --global protocol.file.allow always
 # Define the default command.
 CMD ["bash"]
 
+#=== INTEROP_BUILD_STAGE ===
+FROM ${BASE_IMAGE} AS interop
+ARG RELEASE_LABEL=""
+LABEL release="${RELEASE_LABEL}"
+COPY --from=service_account --chown=appuser:appuser . /root/service_account/
+COPY --from=build_info --chown=appuser:appuser . /var/local/build_info/
+COPY --from=grpc_node --chown=appuser:appuser . /home/appuser/grpc-node
+RUN cd /home/appuser/grpc-node && ./setup_interop.sh
+
+USER root
+RUN mkdir -p /interop \
+  && printf '#!/bin/bash\nset -e\ncd /home/appuser/grpc-node\nexec packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh node --require ./test/fixtures/native_native test/interop/interop_client.js "$@"\n' > /interop/client \
+  && printf '#!/bin/bash\nset -e\ncd /home/appuser/grpc-node\nexec packages/grpc-native-core/deps/grpc/tools/run_tests/interop/with_nvm.sh node --require ./test/fixtures/native_native test/interop/interop_server.js "$@"\n' > /interop/server \
+  && chmod +x /interop/*
+USER appuser

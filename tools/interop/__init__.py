@@ -1,4 +1,4 @@
-# Copyright 2021 The gRPC Authors
+# Copyright 2025 gRPC authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,12 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""gRPC Interop Test Harness package."""
 
-FROM golang:1.16
-
-{% include "../../go_path.include" %}
-{% include "../../git_avoid_dubious_ownership_error.include" %}
-{% include "../../run_tests_python_deps.include" %}
-# Define the default command.
-CMD ["bash"]
-
+from .harness import *  # noqa: F401,F403
