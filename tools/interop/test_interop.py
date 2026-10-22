@@ -15,6 +15,7 @@
 """Verification and adversarial regression test suite for gRPC interop harness."""
 
 import ast
+import copy
 import glob
 import io
 import json
@@ -814,6 +815,104 @@ class InteropHarnessVerificationTest(unittest.TestCase):
             self.assertIn("--build-arg BASE_NAME=grpc_interop_csharp", out_legacy)
         finally:
             shutil.rmtree(temp_root, ignore_errors=True)
+
+    def test_18_config_schema_and_ergonomics_validation(self):
+        """Verify config.schema.json completeness, config.json compactness (<350 lines), and negative schema validation."""
+        cfg_path = os.path.join(_REPO_ROOT, "tools/interop/config.json")
+        schema_path = os.path.join(_REPO_ROOT, "tools/interop/config.schema.json")
+        with open(cfg_path) as f:
+            cfg_lines = f.readlines()
+            cfg = json.loads("".join(cfg_lines))
+        with open(schema_path) as f:
+            schema = json.load(f)
+
+        self.assertLess(len(cfg_lines), 350, "config.json must be < 350 lines")
+        self.assertEqual(cfg.get("$schema"), "./config.schema.json")
+        self.assertEqual(
+            schema.get("$schema"), "https://json-schema.org/draft/2020-12/schema"
+        )
+        for prop_name, prop_spec in schema["properties"].items():
+            self.assertTrue(
+                "description" in prop_spec or "$ref" in prop_spec,
+                f"Top-level property {prop_name} missing description/$ref",
+            )
+        for def_name, def_spec in schema["$defs"].items():
+            self.assertIn(
+                "description",
+                def_spec,
+                f"$defs.{def_name} missing description",
+            )
+            for p_name, p_spec in def_spec.get("properties", {}).items():
+                self.assertIn(
+                    "description",
+                    p_spec,
+                    f"$defs.{def_name}.properties.{p_name} missing description",
+                )
+
+        runner.validate_config(cfg, schema)
+
+        def assert_invalid(mutator, msg):
+            bad = copy.deepcopy(cfg)
+            mutator(bad)
+            with self.assertRaises(ValueError, msg=msg):
+                runner.validate_config(bad, schema)
+
+        assert_invalid(
+            lambda d: d.pop("test_cases"),
+            "Missing required top-level key must fail",
+        )
+        assert_invalid(
+            lambda d: d.update({"unknown_top_key": 123}),
+            "Unknown top-level property must fail",
+        )
+        assert_invalid(
+            lambda d: d["languages"]["dart"].update({"bogus_field": True}),
+            "Unknown language property must fail",
+        )
+        assert_invalid(
+            lambda d: d["languages"]["dart"]["add_client_capabilities"].append(
+                "NOT_A_CAPABILITY"
+            ),
+            "Invalid capability enum must fail",
+        )
+        assert_invalid(
+            lambda d: d["capabilities"].append("CORE_INTEROP"),
+            "Duplicate capability in uniqueItems array must fail",
+        )
+        assert_invalid(
+            lambda d: d["languages"]["objc"].update(
+                {"in_runner_languages": "yes"}
+            ),
+            "Wrong type for boolean field must fail",
+        )
+        assert_invalid(
+            lambda d: d["languages"]["objc"].update(
+                {"add_client_capabilities": ["ORCA"]}
+            ),
+            "Mixing client_capabilities and add_client_capabilities must fail",
+        )
+        assert_invalid(
+            lambda d: d["server_order"].append("nonexistent_lang"),
+            "Unknown language in server_order must fail",
+        )
+        assert_invalid(
+            lambda d: d["matrix"]["languages"]["cxx"]["overrides"].update(
+                {"v1.19.0..v1.0.1": {"testcases_file": "cxx__v1.0.1"}}
+            ),
+            "Reversed release range in matrix overrides must fail",
+        )
+        assert_invalid(
+            lambda d: d["matrix"]["languages"]["cxx"]["overrides"].update(
+                {"v1.19.0..v1.20.0": {"testcases_file": "cxx__v1.0.1"}}
+            ),
+            "Overlapping release range in matrix overrides must fail",
+        )
+        assert_invalid(
+            lambda d: d["matrix"]["languages"]["cxx"]["overrides"][
+                "v1.0.1..v1.19.0"
+            ].update({"testcases_file": "cxx__nonexistent"}),
+            "Unknown testcases_file in matrix overrides must fail",
+        )
 
 
 if __name__ == "__main__":
